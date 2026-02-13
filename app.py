@@ -520,8 +520,23 @@ def manifest():
     })
 
 @app.route('/')
+@app.route('/')
 def index():
     if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    # CHECK BAN STATUS FIRST
+    is_banned, reason, expires = check_ban_status(session['user_id'])
+    if is_banned:
+        session.clear()
+        if expires:
+            if isinstance(expires, str):
+                expires_str = expires[:16]
+            else:
+                expires_str = expires.strftime('%Y-%m-%d %H:%M')
+            flash(f'🚫 Banned until {expires_str}. Reason: {reason or "Violation"}', 'error')
+        else:
+            flash(f'🚫 Permanently banned. Reason: {reason or "Violation"}', 'error')
         return redirect(url_for('login'))
     
     try:
@@ -1289,3 +1304,4 @@ def check_save(verse_id):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
