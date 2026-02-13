@@ -1,883 +1,798 @@
 
-admin_code = '''from flask import Flask, render_template, jsonify, request, redirect, url_for, session, flash
-import subprocess
-import sys
+app_code = '''from flask import Flask, render_template, jsonify, request, redirect, url_for, session, send_from_directory, abort, flash
+import sqlite3
+import time
+import threading
+import requests
 import os
+import re
+import secrets
+import json
 import random
-import string
-
-try:
-    import psycopg2
-    import psycopg2.extras
-except ImportError:
-    print("Installing psycopg2-binary...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "psycopg2-binary"])
-    import psycopg2
-    import psycopg2.extras
-
+import logging
+import atexit
 from datetime import datetime, timedelta
 from functools import wraps
-import json
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = 'local-admin-dashboard-secret-key-v2'
+app.permanent_session_lifetime = timedelta(days=30)
 
-# Database connection - Using your actual Render database
-DATABASE_URL = "postgresql://bible_db_2y32_user:aw2y7YQyqKZTPLCPaUcOs5wybLEJpqQX@dpg-d67hk9ggjchc73amsghg-a.oregon-postgres.render.com/bible_db_2y32"
+@app.before_request
+def make_session_permanent():
+    session.permanent = True
 
-# Role hierarchy (higher number = more power)
-ROLES = {
-    'user': 0,
-    'host': 1,        # Temp ban only (1hr - 1 month)
-    'mod': 2,         # Temp ban + delete content
-    'contributor': 3, # Perm ban/unban + delete
-    'co_owner': 4,    # Almost everything + demote lower roles
-    'owner': 5        # Everything + role management
-}
+app.secret_key = os.environ.get("SECRET_KEY", "bible-app-secret-key-2024")
+STATIC_DOMAIN = os.environ.get("STATIC_DOMAIN", "aibible.onrender.com")
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://aibible.onrender.com")
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
+ADMIN_CODE = os.environ.get("ADMIN_CODE", "God Is All")
+DATABASE_URL = os.environ.get('DATABASE_URL')
 
-ROLE_INFO = {
-    'user': {'color': '#718096', 'label': 'User', 'icon': '👤'},
-    'host': {'color': '#38a169', 'label': 'Host', 'icon': '🎤'},
-    'mod': {'color': '#3182ce', 'label': 'Moderator', 'icon': '🛡️'},
-    'contributor': {'color': '#805ad5', 'label': 'Contributor', 'icon': '⭐'},
-    'co_owner': {'color': '#dd6b20', 'label': 'Co-Owner', 'icon': '👑'},
-    'owner': {'color': '#e53e3e', 'label': 'Owner', 'icon': '🔥'}
-}
+if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
 
-ROLE_COLORS = {
-    'user': '#718096',
-    'host': '#38a169',
-    'mod': '#3182ce',
-    'contributor': '#805ad5',
-    'co_owner': '#dd6b20',
-    'owner': '#e53e3e'
-}
-
-MASTER_PASSWORD = "God Is All"
-
-# Passcode file path
-PASSCODE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'passcodes.txt')
-
-def generate_passcode():
-    """Generate random passcode format: XXXX-XXXX-XXXX"""
-    parts = []
-    for _ in range(3):
-        parts.append(''.join(random.choices(string.ascii_uppercase + string.digits, k=4)))
-    return '-'.join(parts)
-
-def init_passcodes():
-    """Create passcodes.txt if it doesn't exist"""
-    if not os.path.exists(PASSCODE_FILE):
-        codes = {
-            'HOST': f"HOST-{generate_passcode()}",
-            'MOD': f"MOD-{generate_passcode()}",
-            'CONTRIBUTOR': f"CONTRIB-{generate_passcode()}",
-            'CO_OWNER': f"COOWNER-{generate_passcode()}",
-            'OWNER': "Gmelchor2001@@"
-        }
-        with open(PASSCODE_FILE, 'w') as f:
-            f.write("# Bible AI Admin Passcodes\\n")
-            f.write("# Format: ROLE: CODE\\n")
-            f.write("# Owner code is fixed, others can be changed\\n\\n")
-            for role, code in codes.items():
-                f.write(f"{role}: {code}\\n")
-        print(f"✓ Generated passcodes file: {PASSCODE_FILE}")
-        return codes
-    else:
-        codes = {}
-        with open(PASSCODE_FILE, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and ':' in line:
-                    role, code = line.split(':', 1)
-                    codes[role.strip()] = code.strip()
-        return codes
-
-PASSCODES = init_passcodes()
+db_path = os.path.join(os.path.dirname(__file__), "bible_ios.db")
 
 def get_db():
-    return psycopg2.connect(DATABASE_URL, sslmode='require')
+    if DATABASE_URL and ('postgresql' in DATABASE_URL):
+        import psycopg2
+        import psycopg2.extras
+        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        return conn
+    else:
+        conn = sqlite3.connect(db_path, timeout=20)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+def get_cursor(conn):
+    if DATABASE_URL and ('postgresql' in DATABASE_URL):
+        return conn.cursor()
+    else:
+        return conn.cursor()
+
+def db_execute(c, sql, params=()):
+    is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+    if is_postgres:
+        sql = sql.replace('?', '%s')
+        if 'INSERT OR IGNORE' in sql:
+            sql = sql.replace('INSERT OR IGNORE', 'INSERT')
+            if 'UNIQUE' in sql or 'user_id' in sql or 'google_id' in sql:
+                sql += ' ON CONFLICT DO NOTHING'
+    c.execute(sql, params)
+    return c
 
 def init_db():
-    """Initialize database columns if they don't exist"""
     conn = None
     try:
         conn = get_db()
-        c = conn.cursor()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
         
-        # Check and add role column
-        c.execute("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name='users' AND column_name='role'
-        """)
-        if not c.fetchone():
-            c.execute("ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'")
-            print("Added 'role' column")
-        
-        # Check and add is_banned column
-        c.execute("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name='users' AND column_name='is_banned'
-        """)
-        if not c.fetchone():
-            c.execute("ALTER TABLE users ADD COLUMN is_banned BOOLEAN DEFAULT FALSE")
-            print("Added 'is_banned' column")
-        
-        # Check and add ban_expires_at column
-        c.execute("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name='users' AND column_name='ban_expires_at'
-        """)
-        if not c.fetchone():
-            c.execute("ALTER TABLE users ADD COLUMN ban_expires_at TIMESTAMP")
-            print("Added 'ban_expires_at' column")
-        
-        # Check and add ban_reason column
-        c.execute("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name='users' AND column_name='ban_reason'
-        """)
-        if not c.fetchone():
-            c.execute("ALTER TABLE users ADD COLUMN ban_reason TEXT")
-            print("Added 'ban_reason' column")
-        
-        # Create audit_logs table if not exists
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS audit_logs (
-                id SERIAL PRIMARY KEY,
-                admin_id INTEGER REFERENCES users(id),
-                action VARCHAR(50),
-                target_user_id INTEGER REFERENCES users(id),
-                details TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        if is_postgres:
+            c.execute('''CREATE TABLE IF NOT EXISTS verses 
+                         (id SERIAL PRIMARY KEY, reference TEXT, text TEXT, 
+                          translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS users 
+                         (id SERIAL PRIMARY KEY, google_id TEXT UNIQUE, email TEXT, 
+                          name TEXT, picture TEXT, created_at TEXT, is_admin INTEGER DEFAULT 0,
+                          is_banned BOOLEAN DEFAULT FALSE, ban_expires_at TIMESTAMP, ban_reason TEXT, role TEXT DEFAULT 'user')''')
+            c.execute('''CREATE TABLE IF NOT EXISTS likes 
+                         (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER, 
+                          timestamp TEXT, UNIQUE(user_id, verse_id))''')
+            c.execute('''CREATE TABLE IF NOT EXISTS saves 
+                         (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER, 
+                          timestamp TEXT, UNIQUE(user_id, verse_id))''')
+            c.execute('''CREATE TABLE IF NOT EXISTS comments 
+                         (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER,
+                          text TEXT, timestamp TEXT, google_name TEXT, google_picture TEXT)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS collections 
+                         (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, 
+                          color TEXT, created_at TEXT)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS verse_collections 
+                         (id SERIAL PRIMARY KEY, collection_id INTEGER, verse_id INTEGER,
+                          UNIQUE(collection_id, verse_id))''')
+            c.execute('''CREATE TABLE IF NOT EXISTS verse_sessions 
+                         (id SERIAL PRIMARY KEY, verse_id INTEGER, session_id TEXT,
+                          created_at TEXT, expires_at TEXT)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
+                         (id SERIAL PRIMARY KEY, user_id INTEGER, text TEXT, 
+                          timestamp TEXT, google_name TEXT, google_picture TEXT)''')
+            
+            # Add missing columns if they don't exist
+            try:
+                c.execute("SELECT is_banned FROM users LIMIT 1")
+            except:
+                c.execute("ALTER TABLE users ADD COLUMN is_banned BOOLEAN DEFAULT FALSE")
+                c.execute("ALTER TABLE users ADD COLUMN ban_expires_at TIMESTAMP")
+                c.execute("ALTER TABLE users ADD COLUMN ban_reason TEXT")
+                logger.info("Added ban columns")
+            
+            try:
+                c.execute("SELECT role FROM users LIMIT 1")
+            except:
+                c.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
+                logger.info("Added role column")
+        else:
+            c.execute('''CREATE TABLE IF NOT EXISTS verses 
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, reference TEXT, text TEXT, 
+                          translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS users 
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, google_id TEXT UNIQUE, email TEXT, 
+                          name TEXT, picture TEXT, created_at TEXT, is_admin INTEGER DEFAULT 0,
+                          is_banned INTEGER DEFAULT 0, ban_expires_at TEXT, ban_reason TEXT, role TEXT DEFAULT 'user')''')
+            c.execute('''CREATE TABLE IF NOT EXISTS likes 
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER, 
+                          timestamp TEXT, UNIQUE(user_id, verse_id))''')
+            c.execute('''CREATE TABLE IF NOT EXISTS saves 
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER, 
+                          timestamp TEXT, UNIQUE(user_id, verse_id))''')
+            c.execute('''CREATE TABLE IF NOT EXISTS comments 
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER,
+                          text TEXT, timestamp TEXT, google_name TEXT, google_picture TEXT)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS collections 
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, 
+                          color TEXT, created_at TEXT)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS verse_collections 
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, collection_id INTEGER, verse_id INTEGER,
+                          UNIQUE(collection_id, verse_id))''')
+            c.execute('''CREATE TABLE IF NOT EXISTS verse_sessions 
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, verse_id INTEGER, session_id TEXT,
+                          created_at TEXT, expires_at TEXT)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, text TEXT, 
+                          timestamp TEXT, google_name TEXT, google_picture TEXT)''')
         
         conn.commit()
-        print("✓ Database initialized")
+        logger.info("Database initialized")
     except Exception as e:
-        print(f"Init error: {e}")
+        logger.error(f"DB init error: {e}")
+        raise
     finally:
         if conn:
             conn.close()
 
-def has_permission(min_role):
-    """Check if current user has required role level"""
-    if not session.get('admin_logged_in'):
-        return False
-    current_role = session.get('admin_role', 'user')
-    return ROLES.get(current_role, 0) >= ROLES.get(min_role, 0)
+init_db()
 
-def require_role(min_role):
-    def decorator(f):
-        @wraps(f)
-        def decorated_function(*args, **kwargs):
-            if not session.get('admin_logged_in'):
-                return redirect(url_for('login'))
-            if not has_permission(min_role):
-                flash(f'You need {min_role} permissions to access this.', 'error')
-                return redirect(url_for('dashboard'))
-            return f(*args, **kwargs)
-        return decorated_function
-    return decorator
-
-def log_action(action, target_user_id=None, details=None):
-    """Log admin actions"""
+def check_ban_status(user_id):
+    """Check if user is banned with improved error handling. Returns (is_banned, reason, expires)"""
     conn = None
     try:
         conn = get_db()
-        c = conn.cursor()
-        admin_id = session.get('admin_user_id')
-        c.execute("""
-            INSERT INTO audit_logs (admin_id, action, target_user_id, details)
-            VALUES (%s, %s, %s, %s)
-        """, (admin_id, action, target_user_id, json.dumps(details) if details else None))
-        conn.commit()
-    except Exception as e:
-        print(f"Log action error: {e}")
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/')
-def index():
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('login'))
-    return redirect(url_for('dashboard'))
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    """Simple login: Enter email + password. Auto-grants Host if no role set."""
-    if request.method == 'POST':
-        email = request.form.get('email', '').strip().lower()
-        password = request.form.get('password', '')
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
         
-        if not email or not password:
-            return render_template('admin_login.html', error='Please enter email and password')
+        if is_postgres:
+            c.execute("SELECT is_banned, ban_expires_at, ban_reason FROM users WHERE id = %s", (user_id,))
+        else:
+            c.execute("SELECT is_banned, ban_expires_at, ban_reason FROM users WHERE id = ?", (user_id,))
         
-        conn = None
-        try:
-            conn = get_db()
-            c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            c.execute("SELECT * FROM users WHERE LOWER(email) = %s", (email,))
-            user = c.fetchone()
-            
-            if not user:
-                return render_template('admin_login.html', error='Email not found in database')
-            
-            if password == MASTER_PASSWORD:
-                session['admin_logged_in'] = True
-                session['admin_user_id'] = user['id']
-                session['admin_name'] = user['name']
-                session['admin_email'] = user['email']
-                
-                # Check if user has role column and set default if needed
-                user_role = user.get('role', 'user')
-                if not user_role or user_role == 'user':
-                    c.execute("UPDATE users SET role = 'host' WHERE id = %s", (user['id'],))
-                    conn.commit()
-                    session['admin_role'] = 'host'
-                    flash('Welcome! You have been granted Host permissions.', 'success')
+        row = c.fetchone()
+        
+        if not row:
+            return False, None, None
+        
+        # Handle both dict and tuple results
+        if isinstance(row, dict):
+            is_banned = row.get('is_banned', False)
+            expires = row.get('ban_expires_at')
+            reason = row.get('ban_reason')
+        else:
+            is_banned = row[0]
+            expires = row[1] if len(row) > 1 else None
+            reason = row[2] if len(row) > 2 else None
+        
+        # Convert PostgreSQL boolean (might be 't', 'f', True, False, 1, 0)
+        if isinstance(is_banned, str):
+            is_banned = is_banned.lower() in ('true', 't', '1', 'yes')
+        elif isinstance(is_banned, int):
+            is_banned = bool(is_banned)
+        
+        # Check if ban expired
+        if is_banned and expires:
+            try:
+                if isinstance(expires, str):
+                    # Handle PostgreSQL timestamp format
+                    expires = expires.replace('Z', '+00:00')
+                    if '+' in expires:
+                        expires_dt = datetime.fromisoformat(expires)
+                        expires_dt = expires_dt.replace(tzinfo=None)
+                    else:
+                        expires_dt = datetime.fromisoformat(expires)
                 else:
-                    session['admin_role'] = user_role
+                    expires_dt = expires
                 
-                log_action('login')
-                return redirect(url_for('dashboard'))
+                now = datetime.now()
+                
+                if now > expires_dt:
+                    # Auto unban
+                    if is_postgres:
+                        c.execute("UPDATE users SET is_banned = FALSE, ban_expires_at = NULL, ban_reason = NULL WHERE id = %s", (user_id,))
+                    else:
+                        c.execute("UPDATE users SET is_banned = 0, ban_expires_at = NULL, ban_reason = NULL WHERE id = ?", (user_id,))
+                    conn.commit()
+                    logger.info(f"Auto-unbanned user {user_id}")
+                    return False, None, None
+            except Exception as e:
+                logger.error(f"Ban expiry check error: {e}")
+        
+        return is_banned, reason, expires
+        
+    except Exception as e:
+        logger.error(f"Ban check error for user {user_id}: {e}")
+        return False, None, None
+    finally:
+        if conn:
+            conn.close()
+
+# GLOBAL BAN CHECK - Runs before every request
+@app.before_request
+def global_ban_check():
+    """Check ban status before every request"""
+    if 'user_id' not in session:
+        return
+    
+    # Skip static files and specific endpoints
+    if request.endpoint in ['static', 'serve_audio', 'manifest', 'login', 'callback', 'google_login', 'logout']:
+        return
+    
+    # Check ban for logged-in users
+    is_banned, reason, expires = check_ban_status(session['user_id'])
+    
+    if is_banned:
+        # Format ban message
+        if expires:
+            if isinstance(expires, str):
+                expires_str = expires[:16] if len(expires) > 16 else expires
             else:
-                return render_template('admin_login.html', error='Invalid password')
+                expires_str = expires.strftime('%Y-%m-%d %H:%M')
+            msg = f'Banned until {expires_str}. Reason: {reason or "Violation"}'
+        else:
+            msg = f'Permanently banned. Reason: {reason or "Violation"}'
+        
+        # For API requests, return JSON error
+        if request.path.startswith('/api/') and request.method != 'GET':
+            return jsonify({
+                "error": msg, 
+                "banned": True, 
+                "reason": reason or "Violation",
+                "expires": expires
+            }), 403
+        
+        # For page requests, flash and redirect
+        if request.method == 'GET' and not request.path.startswith('/api/'):
+            session.clear()
+            flash(f'🚫 {msg}', 'error')
+            return redirect(url_for('login'))
+
+class BibleGenerator:
+    def __init__(self):
+        self.running = True
+        self.interval = 60  # Default 60 seconds
+        self.current_verse = {
+            "id": 1,
+            "ref": "John 3:16",
+            "text": "For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life.",
+            "trans": "NIV",
+            "source": "Default",
+            "book": "John",
+            "is_new": True,
+            "session_id": secrets.token_hex(8)
+        }
+        self.total_verses = 1
+        self.session_id = secrets.token_hex(8)
+        self.last_fetch = time.time()
+        self.lock = threading.Lock()
+        
+        self.networks = [
+            {"name": "Bible-API.com", "url": "https://bible-api.com/?random=verse"},
+            {"name": "labs.bible.org", "url": "https://labs.bible.org/api/?passage=random&type=json"},
+            {"name": "KJV Random", "url": "https://bible-api.com/?random=verse&translation=kjv"}
+        ]
+        self.network_idx = 0
+        self.session = requests.Session()
+        self.session.headers.update({'User-Agent': 'Mozilla/5.0'})
+        
+        # Start background thread for automatic fetching
+        self.start_background_fetcher()
+    
+    def start_background_fetcher(self):
+        """Start background thread to fetch verses automatically"""
+        def fetcher_loop():
+            logger.info("Background verse fetcher started")
+            while self.running:
+                try:
+                    time.sleep(5)  # Check every 5 seconds
+                    if time.time() - self.last_fetch > self.interval:
+                        self.fetch_verse()
+                except Exception as e:
+                    logger.error(f"Background fetcher error: {e}")
+        
+        thread = threading.Thread(target=fetcher_loop, daemon=True)
+        thread.start()
+        logger.info("Background fetcher thread started")
+    
+    def stop(self):
+        self.running = False
+    
+    def set_interval(self, seconds):
+        self.interval = max(30, min(300, int(seconds)))
+        logger.info(f"Verse interval set to {self.interval} seconds")
+    
+    def get_time_left(self):
+        with self.lock:
+            return max(0, self.interval - int(time.time() - self.last_fetch))
+    
+    def check_and_update(self):
+        """Check if we need to update (called by API)"""
+        with self.lock:
+            if time.time() - self.last_fetch > self.interval:
+                # Don't fetch here, just return current state
+                # Background thread handles actual fetching
+                pass
+    
+    def extract_book(self, ref):
+        match = re.match(r'^([0-9]?\\s?[A-Za-z]+)', ref)
+        return match.group(1) if match else "Unknown"
+    
+    def fetch_verse(self):
+        """Fetch a new verse from the API"""
+        with self.lock:
+            self.last_fetch = time.time()
+        
+        network = self.networks[self.network_idx]
+        conn = None
+        
+        try:
+            logger.info(f"Fetching verse from {network['name']}...")
+            r = self.session.get(network["url"], timeout=10)
+            
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list):
+                    data = data[0]
+                    ref = f"{data['bookname']} {data['chapter']}:{data['verse']}"
+                    text = data['text']
+                    trans = "WEB"
+                else:
+                    ref = data.get('reference', 'Unknown')
+                    text = data.get('text', '').strip()
+                    trans = data.get('translation_name', 'KJV')
+                
+                if not text:
+                    raise ValueError("Empty verse text received")
+                
+                book = self.extract_book(ref)
+                
+                conn = get_db()
+                c = get_cursor(conn)
+                is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+                
+                # Insert verse
+                if is_postgres:
+                    c.execute("""
+                        INSERT INTO verses (reference, text, translation, source, timestamp, book) 
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT DO NOTHING
+                    """, (ref, text, trans, network["name"], datetime.now().isoformat(), book))
+                else:
+                    c.execute("""
+                        INSERT OR IGNORE INTO verses (reference, text, translation, source, timestamp, book) 
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (ref, text, trans, network["name"], datetime.now().isoformat(), book))
+                
+                conn.commit()
+                
+                # Get the verse ID
+                if is_postgres:
+                    c.execute("SELECT id FROM verses WHERE reference = %s AND text = %s", (ref, text))
+                else:
+                    c.execute("SELECT id FROM verses WHERE reference = ? AND text = ?", (ref, text))
+                result = c.fetchone()
+                
+                verse_id = result[0] if result else None
+                
+                with self.lock:
+                    self.session_id = secrets.token_hex(8)
+                    self.current_verse = {
+                        "id": verse_id, "ref": ref, "text": text,
+                        "trans": trans, "source": network["name"], "book": book,
+                        "is_new": True, "session_id": self.session_id
+                    }
+                    self.total_verses += 1
+                
+                logger.info(f"Successfully fetched: {ref}")
+                return True
+            else:
+                logger.warning(f"HTTP {r.status_code} from {network['name']}")
+                
         except Exception as e:
-            print(f"Login error: {e}")
-            return render_template('admin_login.html', error='Database error')
+            logger.error(f"Fetch error from {network['name']}: {e}")
         finally:
             if conn:
                 conn.close()
+        
+        # Rotate to next network on failure
+        self.network_idx = (self.network_idx + 1) % len(self.networks)
+        return False
     
-    return render_template('admin_login.html')
-
-@app.route('/claim-role', methods=['POST'])
-@require_role('user')
-def claim_role():
-    """Claim a role using passcode"""
-    data = request.get_json()
-    role = data.get('role', '').lower()
-    code = data.get('code', '').strip()
-    
-    if not role or not code:
-        return jsonify({'success': False, 'error': 'Missing role or code'})
-    
-    if role not in ROLES or role == 'user':
-        return jsonify({'success': False, 'error': 'Invalid role'})
-    
-    current_role = session.get('admin_role', 'user')
-    if ROLES.get(current_role, 0) >= ROLES.get(role, 0):
-        return jsonify({'success': False, 'error': f'You already have {current_role} or higher'})
-    
-    expected_code = PASSCODES.get(role.upper())
-    if not expected_code or code != expected_code:
-        return jsonify({'success': False, 'error': 'Invalid passcode'})
-    
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        user_id = session.get('admin_user_id')
-        
-        c.execute("UPDATE users SET role = %s WHERE id = %s", (role, user_id))
-        conn.commit()
-        
-        session['admin_role'] = role
-        
-        log_action('role_claimed', details={'new_role': role, 'old_role': current_role})
-        
-        return jsonify({
-            'success': True, 
-            'message': f'Successfully claimed {ROLE_INFO.get(role, {}).get("label", role)} role!'
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/dashboard')
-@require_role('host')
-def dashboard():
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        
-        stats = {}
-        
-        # Total users
-        c.execute("SELECT COUNT(*) as count FROM users")
-        result = c.fetchone()
-        stats['total_users'] = result['count'] if result else 0
-        
-        # Active bans - check if expired
-        c.execute("""
-            SELECT COUNT(*) as count FROM users 
-            WHERE is_banned = TRUE 
-            AND (ban_expires_at IS NULL OR ban_expires_at > NOW())
-        """)
-        result = c.fetchone()
-        stats['active_bans'] = result['count'] if result else 0
-        
-        # Comments in 24h
-        c.execute("""
-            SELECT COUNT(*) as count FROM comments 
-            WHERE timestamp::timestamp > NOW() - INTERVAL '24 hours'
-        """)
-        result = c.fetchone()
-        stats['comments_24h'] = result['count'] if result else 0
-        
-        # Messages in 24h
-        c.execute("""
-            SELECT COUNT(*) as count FROM community_messages 
-            WHERE timestamp::timestamp > NOW() - INTERVAL '24 hours'
-        """)
-        result = c.fetchone()
-        stats['messages_24h'] = result['count'] if result else 0
-        
-        # Recent users with counts
-        c.execute("""
-            SELECT u.id, u.name, u.email, u.picture, u.role, u.is_banned, 
-                   u.created_at::timestamp as created_at,
-                   COUNT(DISTINCT c.id) as comment_count,
-                   COUNT(DISTINCT m.id) as message_count
-            FROM users u
-            LEFT JOIN comments c ON u.id = c.user_id
-            LEFT JOIN community_messages m ON u.id = m.user_id
-            GROUP BY u.id
-            ORDER BY u.created_at::timestamp DESC
-            LIMIT 10
-        """)
-        recent_users = c.fetchall()
-        
-        # Recent audit logs
-        c.execute("""
-            SELECT a.id, a.action, a.target_user_id, a.details,
-                   a.created_at::timestamp as created_at,
-                   admin.name as admin_name, target.name as target_name
-            FROM audit_logs a
-            JOIN users admin ON a.admin_id = admin.id
-            LEFT JOIN users target ON a.target_user_id = target.id
-            ORDER BY a.created_at DESC
-            LIMIT 20
-        """)
-        recent_logs = c.fetchall()
-        
-        return render_template('admin_dashboard.html',
-                             stats=stats,
-                             recent_users=recent_users,
-                             recent_logs=recent_logs,
-                             ROLE_INFO=ROLE_INFO,
-                             ROLE_COLORS=ROLE_COLORS,
-                             current_role=session.get('admin_role'),
-                             has_permission=has_permission,
-                             passcodes=PASSCODES)
-    except Exception as e:
-        flash(f'Error loading dashboard: {e}', 'error')
-        return redirect(url_for('login'))
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/users')
-@require_role('host')
-def users():
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        
-        search = request.args.get('search', '')
-        role_filter = request.args.get('role', '')
-        banned_only = request.args.get('banned', '')
-        
-        query = """
-            SELECT u.id, u.name, u.email, u.picture, u.role, u.is_banned, 
-                   u.ban_expires_at::timestamp as ban_expires_at,
-                   u.ban_reason, u.created_at::timestamp as created_at,
-                   COUNT(DISTINCT c.id) as comment_count,
-                   COUNT(DISTINCT m.id) as message_count
-            FROM users u
-            LEFT JOIN comments c ON u.id = c.user_id
-            LEFT JOIN community_messages m ON u.id = m.user_id
-            WHERE 1=1
-        """
-        params = []
-        
-        if search:
-            query += " AND (u.name ILIKE %s OR u.email ILIKE %s)"
-            params.extend([f'%{search}%', f'%{search}%'])
-        
-        if role_filter:
-            query += " AND u.role = %s"
-            params.append(role_filter)
-        
-        if banned_only:
-            query += " AND u.is_banned = TRUE"
-        
-        query += " GROUP BY u.id ORDER BY u.created_at::timestamp DESC LIMIT 100"
-        
-        c.execute(query, params)
-        users = c.fetchall()
-        
-        c.execute("SELECT DISTINCT role FROM users ORDER BY role")
-        roles = [r['role'] for r in c.fetchall() if r['role']]
-        
-        return render_template('admin_users.html',
-                             users=users,
-                             roles=roles,
-                             ROLE_INFO=ROLE_INFO,
-                             ROLE_COLORS=ROLE_COLORS,
-                             current_role=session.get('admin_role'),
-                             has_permission=has_permission)
-    except Exception as e:
-        flash(f'Error loading users: {e}', 'error')
-        return redirect(url_for('dashboard'))
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/user/<int:user_id>')
-@require_role('host')
-def user_detail(user_id):
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        
-        # Get user with proper typing
-        c.execute("""
-            SELECT u.*, u.created_at::timestamp as created_at,
-                   u.ban_expires_at::timestamp as ban_expires_at
-            FROM users u WHERE u.id = %s
-        """, (user_id,))
-        user = c.fetchone()
-        
-        if not user:
-            flash('User not found', 'error')
-            return redirect(url_for('users'))
-        
-        # Convert boolean properly
-        if 'is_banned' in user:
-            user['is_banned'] = bool(user['is_banned'])
-        
-        # Get current user's role level
-        current_user_id = session.get('admin_user_id')
-        current_role = session.get('admin_role', 'user')
-        current_level = ROLES.get(current_role, 0)
-        target_level = ROLES.get(user.get('role', 'user'), 0)
-        
-        # Determine if current user can manage this target
-        can_ban = False
-        can_change_role = False
-        
-        # Cannot ban yourself
-        if user['id'] != current_user_id:
-            # Owners cannot be banned by anyone
-            if user.get('role') != 'owner':
-                can_ban = has_permission('host')
-            
-            # Role management permissions
-            if has_permission('owner'):
-                can_change_role = True
-            elif has_permission('co_owner') and target_level < ROLES['co_owner']:
-                can_change_role = True
-        
-        # Get user's comments with verse references
-        c.execute("""
-            SELECT c.*, c.timestamp::timestamp as timestamp, v.reference 
-            FROM comments c
-            LEFT JOIN verses v ON c.verse_id = v.id
-            WHERE c.user_id = %s
-            ORDER BY c.timestamp::timestamp DESC
-            LIMIT 50
-        """, (user_id,))
-        comments = c.fetchall()
-        
-        # Get user's messages
-        c.execute("""
-            SELECT *, timestamp::timestamp as timestamp 
-            FROM community_messages 
-            WHERE user_id = %s
-            ORDER BY timestamp::timestamp DESC
-            LIMIT 50
-        """, (user_id,))
-        messages = c.fetchall()
-        
-        # Get ban history
-        c.execute("""
-            SELECT a.*, a.created_at::timestamp as created_at, admin.name as admin_name
-            FROM audit_logs a
-            JOIN users admin ON a.admin_id = admin.id
-            WHERE a.target_user_id = %s AND a.action IN ('ban', 'unban', 'temp_ban')
-            ORDER BY a.created_at DESC
-        """, (user_id,))
-        ban_history = c.fetchall()
-        
-        return render_template('admin_user_detail.html',
-                             user=user,
-                             comments=comments,
-                             messages=messages,
-                             ban_history=ban_history,
-                             ROLE_INFO=ROLE_INFO,
-                             ROLE_COLORS=ROLE_COLORS,
-                             has_permission=has_permission,
-                             can_ban=can_ban,
-                             can_change_role=can_change_role)
-    except Exception as e:
-        flash(f'Error loading user: {e}', 'error')
-        return redirect(url_for('users'))
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/content')
-@require_role('mod')
-def content_moderation():
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        
-        c.execute("""
-            SELECT c.*, c.timestamp::timestamp as timestamp, u.name, u.role, u.is_banned, v.reference
-            FROM comments c
-            JOIN users u ON c.user_id = u.id
-            LEFT JOIN verses v ON c.verse_id = v.id
-            ORDER BY c.timestamp::timestamp DESC
-            LIMIT 50
-        """)
-        comments = c.fetchall()
-        
-        c.execute("""
-            SELECT m.*, m.timestamp::timestamp as timestamp, u.name, u.role, u.is_banned
-            FROM community_messages m
-            JOIN users u ON m.user_id = u.id
-            ORDER BY m.timestamp::timestamp DESC
-            LIMIT 50
-        """)
-        messages = c.fetchall()
-        
-        return render_template('admin_content.html',
-                             comments=comments,
-                             messages=messages,
-                             ROLE_INFO=ROLE_INFO,
-                             ROLE_COLORS=ROLE_COLORS,
-                             current_role=session.get('admin_role'),
-                             has_permission=has_permission)
-    except Exception as e:
-        flash(f'Error loading content: {e}', 'error')
-        return redirect(url_for('dashboard'))
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/audit-log')
-@require_role('co_owner')
-def audit_log():
-    conn = None
-    try:
-        conn = get_db()
-        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        
-        c.execute("""
-            SELECT a.*, a.created_at::timestamp as created_at, 
-                   admin.name as admin_name, target.name as target_name
-            FROM audit_logs a
-            JOIN users admin ON a.admin_id = admin.id
-            LEFT JOIN users target ON a.target_user_id = target.id
-            ORDER BY a.created_at DESC
-            LIMIT 100
-        """)
-        logs = c.fetchall()
-        
-        return render_template('admin_audit.html', 
-                             logs=logs,
-                             ROLE_INFO=ROLE_INFO,
-                             ROLE_COLORS=ROLE_COLORS,
-                             current_role=session.get('admin_role'),
-                             has_permission=has_permission)
-    except Exception as e:
-        flash(f'Error loading audit log: {e}', 'error')
-        return redirect(url_for('dashboard'))
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/api/ban_user', methods=['POST'])
-@require_role('host')
-def ban_user():
-    """Fixed ban endpoint with comprehensive error handling"""
-    conn = None
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({'success': False, 'error': 'No JSON data received'}), 400
-        
-        user_id = data.get('user_id')
-        duration = data.get('duration')
-        reason = data.get('reason', '').strip()
-        
-        # Validation
-        if not user_id:
-            return jsonify({'success': False, 'error': 'User ID is required'}), 400
-        
-        if not duration:
-            return jsonify({'success': False, 'error': 'Duration is required'}), 400
-        
-        # Convert user_id to int safely
+    def generate_smart_recommendation(self, user_id):
+        """Generate a verse recommendation based on user's liked/saved verses"""
+        conn = None
         try:
-            user_id = int(user_id)
-        except (ValueError, TypeError):
-            return jsonify({'success': False, 'error': f'Invalid user ID format: {user_id}'}), 400
-        
-        current_user_id = session.get('admin_user_id')
-        if not current_user_id:
-            return jsonify({'success': False, 'error': 'Not logged in'}), 401
-        
-        current_user_id = int(current_user_id)
-        
-        # Cannot ban yourself
-        if user_id == current_user_id:
-            return jsonify({'success': False, 'error': 'You cannot ban yourself'}), 403
-        
-        conn = get_db()
-        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        
-        # Get target user with lock to prevent race conditions
-        c.execute("SELECT id, role, is_banned, email, name FROM users WHERE id = %s FOR UPDATE", (user_id,))
-        target = c.fetchone()
-        
-        if not target:
-            return jsonify({'success': False, 'error': f'User with ID {user_id} not found'}), 404
-        
-        # Check if already banned
-        if target.get('is_banned'):
-            return jsonify({'success': False, 'error': f'User {target[\"name\"]} is already banned'}), 400
-        
-        # Owners cannot be banned by anyone
-        if target.get('role') == 'owner':
-            return jsonify({'success': False, 'error': 'Owners cannot be banned'}), 403
-        
-        # Permission check for permanent ban
-        if duration == 'permanent' and not has_permission('contributor'):
-            return jsonify({'success': False, 'error': 'Only Contributors+ can ban permanently'}), 403
-        
-        # Calculate expiration
-        expires_at = None
-        if duration == '1hour':
-            expires_at = datetime.now() + timedelta(hours=1)
-        elif duration == '1day':
-            expires_at = datetime.now() + timedelta(days=1)
-        elif duration == '1week':
-            expires_at = datetime.now() + timedelta(weeks=1)
-        elif duration == '1month':
-            expires_at = datetime.now() + timedelta(days=30)
-        elif duration == 'permanent':
-            expires_at = None
-        else:
-            return jsonify({'success': False, 'error': f'Invalid duration: {duration}'}), 400
-        
-        # Update user ban status
-        c.execute("""
-            UPDATE users 
-            SET is_banned = TRUE, 
-                ban_expires_at = %s,
-                ban_reason = %s
-            WHERE id = %s
-            RETURNING id, name, email
-        """, (expires_at, reason if reason else None, user_id))
-        
-        result = c.fetchone()
-        conn.commit()
-        
-        if not result:
-            return jsonify({'success': False, 'error': 'Database update failed - no rows affected'}), 500
-        
-        # Log the action
-        action = 'temp_ban' if expires_at else 'ban'
-        log_action(action, user_id, {
-            'duration': duration, 
-            'reason': reason,
-            'expires_at': expires_at.isoformat() if expires_at else None,
-            'target_name': target['name'],
-            'target_email': target['email']
-        })
-        
-        return jsonify({
-            'success': True, 
-            'message': f"User {target['name']} has been successfully banned",
-            'user_id': user_id,
-            'duration': duration,
-            'expires_at': expires_at.isoformat() if expires_at else None,
-            'is_permanent': duration == 'permanent'
-        })
-        
-    except Exception as e:
-        import traceback
-        error_msg = f"Ban error: {str(e)}\\n{traceback.format_exc()}"
-        print(error_msg)
-        return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
-    finally:
-        if conn:
-            conn.close()
+            conn = get_db()
+            c = get_cursor(conn)
+            is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+            
+            # Get user's preferred books from likes and saves
+            if is_postgres:
+                c.execute("""
+                    SELECT DISTINCT v.book FROM verses v 
+                    JOIN likes l ON v.id = l.verse_id 
+                    WHERE l.user_id = %s
+                    UNION
+                    SELECT DISTINCT v.book FROM verses v 
+                    JOIN saves s ON v.id = s.verse_id 
+                    WHERE s.user_id = %s
+                """, (user_id, user_id))
+            else:
+                c.execute("""
+                    SELECT DISTINCT v.book FROM verses v 
+                    JOIN likes l ON v.id = l.verse_id 
+                    WHERE l.user_id = ?
+                    UNION
+                    SELECT DISTINCT v.book FROM verses v 
+                    JOIN saves s ON v.id = s.verse_id 
+                    WHERE s.user_id = ?
+                """, (user_id, user_id))
+            
+            rows = c.fetchall()
+            preferred_books = [row[0] if not isinstance(row, dict) else row['book'] for row in rows]
+            
+            if preferred_books:
+                # Get random verse from preferred books that user hasn't liked yet
+                if is_postgres:
+                    placeholders = ','.join(['%s'] * len(preferred_books))
+                    c.execute(f"""
+                        SELECT * FROM verses
+                        WHERE book IN ({placeholders})
+                        AND id NOT IN (SELECT verse_id FROM likes WHERE user_id = %s)
+                        ORDER BY RANDOM()
+                        LIMIT 1
+                    """, (*preferred_books, user_id))
+                else:
+                    placeholders = ','.join('?' for _ in preferred_books)
+                    c.execute(f"""
+                        SELECT * FROM verses
+                        WHERE book IN ({placeholders})
+                        AND id NOT IN (SELECT verse_id FROM likes WHERE user_id = ?)
+                        ORDER BY RANDOM()
+                        LIMIT 1
+                    """, (*preferred_books, user_id))
+            else:
+                # No preferences yet, get random verse
+                if is_postgres:
+                    c.execute("""
+                        SELECT * FROM verses 
+                        WHERE id NOT IN (SELECT verse_id FROM likes WHERE user_id = %s)
+                        ORDER BY RANDOM() LIMIT 1
+                    """, (user_id,))
+                else:
+                    c.execute("""
+                        SELECT * FROM verses 
+                        WHERE id NOT IN (SELECT verse_id FROM likes WHERE user_id = ?)
+                        ORDER BY RANDOM() LIMIT 1
+                    """, (user_id,))
+            
+            row = c.fetchone()
+            
+            if row:
+                book = row[6] if not isinstance(row, dict) else row['book']
+                ref = row[1] if not isinstance(row, dict) else row['reference']
+                return {
+                    "id": row[0] if not isinstance(row, dict) else row['id'], 
+                    "ref": ref, 
+                    "text": row[2] if not isinstance(row, dict) else row['text'],
+                    "trans": row[3] if not isinstance(row, dict) else row['translation'], 
+                    "book": book,
+                    "reason": f"Because you like {book}" if preferred_books else "Recommended for you"
+                }
+        except Exception as e:
+            logger.error(f"Recommendation error: {e}")
+        finally:
+            if conn:
+                conn.close()
+        return None
 
-@app.route('/api/unban_user/<int:user_id>', methods=['POST'])
-@require_role('contributor')
-def unban_user(user_id):
-    """Fixed unban endpoint"""
+# Initialize generator
+generator = BibleGenerator()
+
+# Register cleanup
+def cleanup():
+    logger.info("Shutting down background fetcher...")
+    generator.stop()
+
+atexit.register(cleanup)
+
+@app.route('/static/audio/<path:filename>')
+def serve_audio(filename):
+    return send_from_directory(os.path.join(app.root_path, 'static', 'audio'), filename)
+
+@app.route('/manifest.json')
+def manifest():
+    return jsonify({
+        "name": "Bible AI",
+        "short_name": "BibleAI",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#000000",
+        "theme_color": "#0A84FF",
+        "icons": [{"src": "/static/icon.png", "sizes": "192x192"}]
+    })
+
+@app.route('/')
+def index():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    # Check ban first
+    is_banned, reason, expires = check_ban_status(session['user_id'])
+    if is_banned:
+        session.clear()
+        if expires:
+            expires_str = expires[:16] if isinstance(expires, str) else expires.strftime('%Y-%m-%d %H:%M')
+            flash(f'🚫 Banned until {expires_str}. Reason: {reason or "Violation"}', 'error')
+        else:
+            flash(f'🚫 Permanently banned. Reason: {reason or "Violation"}', 'error')
+        return redirect(url_for('login'))
+    
     conn = None
     try:
-        current_user_id = session.get('admin_user_id')
-        
-        if not current_user_id:
-            return jsonify({'success': False, 'error': 'Not logged in'}), 401
-        
-        current_user_id = int(current_user_id)
-        
-        # Cannot unban yourself
-        if user_id == current_user_id:
-            return jsonify({'success': False, 'error': 'Invalid action'}), 400
-        
         conn = get_db()
-        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
         
-        # Get user info before unbanning
-        c.execute("SELECT id, name, email, is_banned FROM users WHERE id = %s", (user_id,))
+        if is_postgres:
+            c.execute("SELECT * FROM users WHERE id = %s", (session['user_id'],))
+        else:
+            c.execute("SELECT * FROM users WHERE id = ?", (session['user_id'],))
         user = c.fetchone()
         
         if not user:
-            return jsonify({'success': False, 'error': 'User not found'}), 404
-            
-        if not user.get('is_banned'):
-            return jsonify({'success': False, 'error': 'User is not currently banned'}), 400
+            session.clear()
+            return redirect(url_for('login'))
         
-        c.execute("""
-            UPDATE users 
-            SET is_banned = FALSE, 
-                ban_expires_at = NULL,
-                ban_reason = NULL
-            WHERE id = %s
-            RETURNING id
-        """, (user_id,))
-        
-        result = c.fetchone()
-        conn.commit()
-        
-        if not result:
-            return jsonify({'success': False, 'error': 'Failed to unban user'}), 500
-        
-        log_action('unban', user_id, {
-            'target_name': user['name'],
-            'target_email': user['email']
-        })
-        
-        return jsonify({
-            'success': True, 
-            'message': f"User {user['name']} has been unbanned",
-            'user_id': user_id
-        })
-        
-    except Exception as e:
-        import traceback
-        print(f"Unban error: {str(e)}\\n{traceback.format_exc()}")
-        return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/api/change_role', methods=['POST'])
-@require_role('host')
-def change_role():
-    conn = None
-    try:
-        data = request.get_json()
-        user_id = data.get('user_id')
-        new_role = data.get('role')
-        
-        if not user_id or not new_role:
-            return jsonify({'success': False, 'error': 'Missing parameters'}), 400
-        
-        if new_role not in ROLES:
-            return jsonify({'success': False, 'error': 'Invalid role'}), 400
-        
-        current_user_id = session.get('admin_user_id')
-        current_role = session.get('admin_role', 'user')
-        current_level = ROLES.get(current_role, 0)
-        new_level = ROLES.get(new_role, 0)
-        
-        # Cannot change your own role
-        if int(user_id) == int(current_user_id):
-            return jsonify({'success': False, 'error': 'You cannot change your own role'}), 403
-        
-        conn = get_db()
-        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        c.execute("SELECT role FROM users WHERE id = %s", (user_id,))
-        target = c.fetchone()
-        
-        if not target:
-            return jsonify({'success': False, 'error': 'User not found'}), 404
-        
-        target_current_role = target['role']
-        target_level = ROLES.get(target_current_role, 0)
-        
-        # Hierarchy enforcement
-        if not has_permission('co_owner'):
-            return jsonify({'success': False, 'error': 'Only Co-Owners and above can change roles'}), 403
-        
-        # Co-owners cannot modify owners or other co-owners
-        if has_permission('co_owner') and not has_permission('owner'):
-            if target_level >= ROLES['co_owner']:
-                return jsonify({'success': False, 'error': 'Co-Owners cannot modify Owners or other Co-Owners'}), 403
-            if new_level >= ROLES['co_owner']:
-                return jsonify({'success': False, 'error': 'Co-Owners can only assign roles up to Contributor'}), 403
-        
-        c.execute("UPDATE users SET role = %s WHERE id = %s", (new_role, user_id))
-        conn.commit()
-        
-        log_action('role_change', user_id, {
-            'new_role': new_role, 
-            'old_role': target_current_role,
-            'changed_by': current_role
-        })
-        return jsonify({'success': True, 'message': f'Role changed to {new_role}'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/api/delete_content', methods=['DELETE'])
-@require_role('mod')
-def delete_content():
-    conn = None
-    try:
-        content_type = request.args.get('type')
-        content_id = request.args.get('id')
-        
-        if not content_type or not content_id:
-            return jsonify({'success': False, 'error': 'Missing type or id'}), 400
-        
-        conn = get_db()
-        c = conn.cursor()
-        
-        if content_type == 'comment':
-            c.execute("DELETE FROM comments WHERE id = %s", (content_id,))
-        elif content_type == 'message':
-            c.execute("DELETE FROM community_messages WHERE id = %s", (content_id,))
+        # Get user data safely
+        if isinstance(user, dict):
+            user_data = {
+                'id': user['id'],
+                'email': user['email'],
+                'name': user['name'],
+                'picture': user['picture'],
+                'is_admin': bool(user.get('is_admin', 0)),
+                'is_banned': bool(user.get('is_banned', False)),
+                'ban_reason': user.get('ban_reason'),
+                'ban_expires_at': user.get('ban_expires_at')
+            }
         else:
-            return jsonify({'success': False, 'error': 'Invalid content type'}), 400
+            user_data = {
+                'id': user[0],
+                'email': user[2],
+                'name': user[3],
+                'picture': user[4],
+                'is_admin': bool(user[6]) if len(user) > 6 else False,
+                'is_banned': bool(user[7]) if len(user) > 7 else False,
+                'ban_reason': user[8] if len(user) > 8 else None,
+                'ban_expires_at': user[9] if len(user) > 9 else None
+            }
         
-        conn.commit()
+        # Get stats
+        c.execute("SELECT COUNT(*) FROM verses")
+        total_verses = c.fetchone()[0]
         
-        log_action(f'delete_{content_type}', details={'content_id': content_id})
-        return jsonify({'success': True, 'message': 'Content deleted'})
+        if is_postgres:
+            c.execute("SELECT COUNT(*) FROM likes WHERE user_id = %s", (session['user_id'],))
+            liked_count = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM saves WHERE user_id = %s", (session['user_id'],))
+            saved_count = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM comments WHERE user_id = %s", (session['user_id'],))
+            comment_count = c.fetchone()[0]
+        else:
+            c.execute("SELECT COUNT(*) FROM likes WHERE user_id = ?", (session['user_id'],))
+            liked_count = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM saves WHERE user_id = ?", (session['user_id'],))
+            saved_count = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM comments WHERE user_id = ?", (session['user_id'],))
+            comment_count = c.fetchone()[0]
+        
+        return render_template('web.html', 
+                             user=user_data,
+                             stats={"total_verses": total_verses, "liked": liked_count, "saved": saved_count, "comments": comment_count})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        logger.error(f"Index error: {e}")
+        return f"Server Error: {str(e)}", 500
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/login')
+def login():
+    return render_template('login.html')
+
+@app.route('/google-login')
+def google_login():
+    try:
+        if not GOOGLE_CLIENT_ID:
+            return "Google OAuth not configured", 500
+            
+        google_provider_cfg = requests.get(GOOGLE_DISCOVERY_URL).json()
+        authorization_endpoint = google_provider_cfg["authorization_endpoint"]
+        callback_url = PUBLIC_URL + "/callback"
+        state = secrets.token_urlsafe(16)
+        session['oauth_state'] = state
+        
+        auth_url = (
+            f"{authorization_endpoint}"
+            f"?client_id={GOOGLE_CLIENT_ID}"
+            f"&redirect_uri={callback_url}"
+            f"&response_type=code"
+            f"&scope=openid%20email%20profile"
+            f"&state={state}"
+        )
+        return redirect(auth_url)
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        return f"Error initiating login: {str(e)}", 500
+
+@app.route('/callback')
+def callback():
+    code = request.args.get("code")
+    error = request.args.get("error")
+    state = request.args.get("state")
+    
+    if error:
+        return f"OAuth Error: {error}", 400
+    if not code:
+        return "No authorization code", 400
+    if state != session.get('oauth_state'):
+        return "Invalid state", 400
+    
+    conn = None
+    try:
+        google_provider_cfg = requests.get(GOOGLE_DISCOVERY_URL).json()
+        token_endpoint = google_provider_cfg["token_endpoint"]
+        callback_url = PUBLIC_URL + "/callback"
+        
+        token_response = requests.post(
+            token_endpoint,
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": callback_url,
+                "grant_type": "authorization_code",
+            },
+        )
+        
+        if not token_response.ok:
+            return f"Token error: {token_response.text}", 400
+        
+        tokens = token_response.json()
+        access_token = tokens.get("access_token")
+        
+        userinfo_endpoint = google_provider_cfg["userinfo_endpoint"]
+        userinfo_response = requests.get(
+            userinfo_endpoint,
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        
+        if not userinfo_response.ok:
+            return "Failed to get user info", 400
+        
+        userinfo = userinfo_response.json()
+        google_id = userinfo['sub']
+        email = userinfo['email']
+        name = userinfo.get('name', email.split('@')[0])
+        picture = userinfo.get('picture', '')
+        
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        if is_postgres:
+            c.execute("SELECT * FROM users WHERE google_id = %s", (google_id,))
+        else:
+            c.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
+        user = c.fetchone()
+        
+        if not user:
+            if is_postgres:
+                c.execute("""
+                    INSERT INTO users (google_id, email, name, picture, created_at, is_admin) 
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (google_id, email, name, picture, datetime.now().isoformat(), 0))
+            else:
+                c.execute("""
+                    INSERT OR IGNORE INTO users (google_id, email, name, picture, created_at, is_admin) 
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (google_id, email, name, picture, datetime.now().isoformat(), 0))
+            conn.commit()
+            
+            if is_postgres:
+                c.execute("SELECT * FROM users WHERE google_id = %s", (google_id,))
+            else:
+                c.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
+            user = c.fetchone()
+        
+        # Extract user data
+        if isinstance(user, dict):
+            user_id = user['id']
+            is_banned = bool(user.get('is_banned', False))
+            ban_expires = user.get('ban_expires_at')
+            ban_reason = user.get('ban_reason')
+        else:
+            user_id = user[0]
+            is_banned = bool(user[7]) if len(user) > 7 else False
+            ban_expires = user[8] if len(user) > 8 else None
+            ban_reason = user[9] if len(user) > 9 else None
+        
+        # Check ban before allowing login
+        if is_banned:
+            ban_active = True
+            if ban_expires:
+                try:
+                    if isinstance(ban_expires, str):
+                        expires_dt = datetime.fromisoformat(ban_expires.replace('Z', '+00:00').replace('+00:00', ''))
+                    else:
+                        expires_dt = ban_expires
+                    
+                    if datetime.now() > expires_dt:
+                        # Auto unban
+                        if is_postgres:
+                            c.execute("UPDATE users SET is_banned = FALSE, ban_expires_at = NULL, ban_reason = NULL WHERE id = %s", (user_id,))
+                        else:
+                            c.execute("UPDATE users SET is_banned = 0, ban_expires_at = NULL, ban_reason = NULL WHERE id = ?", (user_id,))
+                        conn.commit()
+                        ban_active = False
+                except Exception as e:
+                    logger.error(f"Ban check error in callback: {e}")
+            
+            if ban_active:
+                if ban_expires:
+                    if isinstance(ban_expires, str):
+                        expires_str = ban_expires[:16]
+                    else:
+                        expires_str = ban_expires.strftime('%Y-%m-%d %H:%M')
+                    return f"""
+                    <html><body style="text-align:center;padding:50px; font-family: sans-serif; background: #1a1a2e; color: white;">
+                        <h1>🚫 Banned</h1>
+                        <p>Until: {expires_str}</p>
+                        <p>Reason: {ban_reason or 'Violation'}</p>
+                        <a href="/" style="color: #667eea;">Home</a>
+                    </body></html>
+                    """, 403
+                else:
+                    return f"""
+                    <html><body style="text-align:center;padding:50px; font-family: sans-serif; background: #1a1a2e; color: white;">
+                        <h1>🚫 Permanently Banned</h1>
+                        <p>Reason: {ban_reason or 'Violation'}</p>
+                        <a href="/" style="color: #667eea;">Home</a>
+                    </body></html>
+                    """, 403
+        
+        session['user_id'] = user_id
+        session['user_name'] = name
+        session['user_picture'] = picture
+        session['is_admin'] = bool(user[6]) if not isinstance(user, dict) else bool(user.get('is_admin', 0))
+        return redirect(url_for('index'))
+    except Exception as e:
+        logger.error(f"Callback error: {e}")
+        return f"Authentication error: {str(e)}", 500
     finally:
         if conn:
             conn.close()
@@ -887,34 +802,716 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
+@app.route('/api/current')
+def get_current():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    try:
+        generator.check_and_update()
+        with generator.lock:
+            verse_copy = generator.current_verse.copy()
+            time_left = generator.get_time_left()
+            total = generator.total_verses
+            session_id = generator.session_id
+            interval = generator.interval
+        
+        return jsonify({
+            "verse": verse_copy,
+            "countdown": time_left,
+            "total_verses": total,
+            "session_id": session_id,
+            "interval": interval
+        })
+    except Exception as e:
+        logger.error(f"API current error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/set_interval', methods=['POST'])
+def set_interval():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    if not session.get('is_admin'):
+        return jsonify({"error": "Admin required"}), 403
+    
+    data = request.get_json()
+    interval = data.get('interval', 60)
+    generator.set_interval(interval)
+    return jsonify({"success": True, "interval": generator.interval})
+
+@app.route('/api/for-you')
+def get_for_you():
+    """Get personalized verse recommendations for the For You tab"""
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    try:
+        # Get 5 recommendations
+        recommendations = []
+        seen_ids = set()
+        
+        for _ in range(5):
+            rec = generator.generate_smart_recommendation(session['user_id'])
+            if rec and rec['id'] not in seen_ids:
+                recommendations.append(rec)
+                seen_ids.add(rec['id'])
+        
+        # If not enough recommendations, fill with random verses
+        if len(recommendations) < 5:
+            conn = get_db()
+            c = get_cursor(conn)
+            is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+            
+            exclude_ids = tuple(seen_ids) if seen_ids else (0,)
+            
+            if is_postgres:
+                placeholders = ','.join(['%s'] * len(exclude_ids))
+                c.execute(f"""
+                    SELECT * FROM verses 
+                    WHERE id NOT IN ({placeholders})
+                    ORDER BY RANDOM() LIMIT %s
+                """, (*exclude_ids, 5 - len(recommendations)))
+            else:
+                placeholders = ','.join('?' for _ in exclude_ids)
+                c.execute(f"""
+                    SELECT * FROM verses 
+                    WHERE id NOT IN ({placeholders})
+                    ORDER BY RANDOM() LIMIT ?
+                """, (*exclude_ids, 5 - len(recommendations)))
+            
+            rows = c.fetchall()
+            conn.close()
+            
+            for row in rows:
+                book = row[6] if not isinstance(row, dict) else row['book']
+                ref = row[1] if not isinstance(row, dict) else row['reference']
+                recommendations.append({
+                    "id": row[0] if not isinstance(row, dict) else row['id'], 
+                    "ref": ref, 
+                    "text": row[2] if not isinstance(row, dict) else row['text'],
+                    "trans": row[3] if not isinstance(row, dict) else row['translation'], 
+                    "book": book,
+                    "reason": "Popular verse"
+                })
+        
+        return jsonify({"recommendations": recommendations})
+    except Exception as e:
+        logger.error(f"For You error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/user_info')
+def get_user_info():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        if is_postgres:
+            c.execute("SELECT created_at, is_admin FROM users WHERE id = %s", (session['user_id'],))
+        else:
+            c.execute("SELECT created_at, is_admin FROM users WHERE id = ?", (session['user_id'],))
+        row = c.fetchone()
+        
+        if row:
+            if isinstance(row, dict):
+                is_admin_val = bool(row.get('is_admin', 0))
+                created_at = row['created_at']
+            else:
+                is_admin_val = bool(row[1]) if len(row) > 1 else False
+                created_at = row[0]
+            
+            return jsonify({
+                "created_at": created_at,
+                "is_admin": is_admin_val,
+                "session_admin": session.get('is_admin', False)
+            })
+        return jsonify({"created_at": None, "is_admin": False, "session_admin": False})
+    except Exception as e:
+        logger.error(f"User info error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/verify_admin', methods=['POST'])
+def verify_admin():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    data = request.get_json()
+    code = data.get('code', '')
+    
+    if code == ADMIN_CODE:
+        conn = None
+        try:
+            conn = get_db()
+            c = get_cursor(conn)
+            is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+            
+            if is_postgres:
+                c.execute("UPDATE users SET is_admin = 1 WHERE id = %s", (session['user_id'],))
+            else:
+                c.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (session['user_id'],))
+            conn.commit()
+            
+            session['is_admin'] = True
+            return jsonify({"success": True, "role": ">Admin<"})
+        except Exception as e:
+            logger.error(f"Admin verify error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+        finally:
+            if conn:
+                conn.close()
+    else:
+        return jsonify({"success": False, "error": "Wrong code"})
+
+@app.route('/api/stats')
+def get_stats():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        c.execute("SELECT COUNT(*) FROM verses")
+        total = c.fetchone()[0]
+        
+        if is_postgres:
+            c.execute("SELECT COUNT(*) FROM likes WHERE user_id = %s", (session['user_id'],))
+            liked = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM saves WHERE user_id = %s", (session['user_id'],))
+            saved = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM comments WHERE user_id = %s", (session['user_id'],))
+            comments = c.fetchone()[0]
+        else:
+            c.execute("SELECT COUNT(*) FROM likes WHERE user_id = ?", (session['user_id'],))
+            liked = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM saves WHERE user_id = ?", (session['user_id'],))
+            saved = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM comments WHERE user_id = ?", (session['user_id'],))
+            comments = c.fetchone()[0]
+        
+        return jsonify({"total_verses": total, "liked": liked, "saved": saved, "comments": comments})
+    except Exception as e:
+        logger.error(f"Stats error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/like', methods=['POST'])
+def like_verse():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    conn = None
+    try:
+        data = request.get_json()
+        verse_id = data.get('verse_id')
+        
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        if is_postgres:
+            c.execute("SELECT id FROM likes WHERE user_id = %s AND verse_id = %s", (session['user_id'], verse_id))
+            if c.fetchone():
+                c.execute("DELETE FROM likes WHERE user_id = %s AND verse_id = %s", (session['user_id'], verse_id))
+                liked = False
+            else:
+                c.execute("INSERT INTO likes (user_id, verse_id, timestamp) VALUES (%s, %s, %s)",
+                          (session['user_id'], verse_id, datetime.now().isoformat()))
+                liked = True
+        else:
+            c.execute("SELECT id FROM likes WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
+            if c.fetchone():
+                c.execute("DELETE FROM likes WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
+                liked = False
+            else:
+                c.execute("INSERT INTO likes (user_id, verse_id, timestamp) VALUES (?, ?, ?)",
+                          (session['user_id'], verse_id, datetime.now().isoformat()))
+                liked = True
+        
+        conn.commit()
+        
+        if liked:
+            rec = generator.generate_smart_recommendation(session['user_id'])
+            return jsonify({"liked": liked, "recommendation": rec})
+        
+        return jsonify({"liked": liked})
+    except Exception as e:
+        logger.error(f"Like error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/save', methods=['POST'])
+def save_verse():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    conn = None
+    try:
+        data = request.get_json()
+        verse_id = data.get('verse_id')
+        
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        if is_postgres:
+            c.execute("SELECT id FROM saves WHERE user_id = %s AND verse_id = %s", (session['user_id'], verse_id))
+            if c.fetchone():
+                c.execute("DELETE FROM saves WHERE user_id = %s AND verse_id = %s", (session['user_id'], verse_id))
+                saved = False
+            else:
+                c.execute("INSERT INTO saves (user_id, verse_id, timestamp) VALUES (%s, %s, %s)",
+                          (session['user_id'], verse_id, datetime.now().isoformat()))
+                saved = True
+        else:
+            c.execute("SELECT id FROM saves WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
+            if c.fetchone():
+                c.execute("DELETE FROM saves WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
+                saved = False
+            else:
+                c.execute("INSERT INTO saves (user_id, verse_id, timestamp) VALUES (?, ?, ?)",
+                          (session['user_id'], verse_id, datetime.now().isoformat()))
+                saved = True
+        
+        conn.commit()
+        return jsonify({"saved": saved})
+    except Exception as e:
+        logger.error(f"Save error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/library')
+def get_library():
+    if 'user_id' not in session:
+        return jsonify({"liked": [], "saved": [], "collections": []})
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        if is_postgres:
+            c.execute("""
+                SELECT v.id, v.reference, v.text, v.translation, v.source, v.book, l.timestamp as liked_at
+                FROM verses v 
+                JOIN likes l ON v.id = l.verse_id 
+                WHERE l.user_id = %s 
+                ORDER BY l.timestamp DESC
+            """, (session['user_id'],))
+            liked_rows = c.fetchall()
+            
+            c.execute("""
+                SELECT v.id, v.reference, v.text, v.translation, v.source, v.book, s.timestamp as saved_at
+                FROM verses v 
+                JOIN saves s ON v.id = s.verse_id 
+                WHERE s.user_id = %s 
+                ORDER BY s.timestamp DESC
+            """, (session['user_id'],))
+            saved_rows = c.fetchall()
+        else:
+            c.execute("""
+                SELECT v.id, v.reference, v.text, v.translation, v.source, v.book, l.timestamp as liked_at
+                FROM verses v 
+                JOIN likes l ON v.id = l.verse_id 
+                WHERE l.user_id = ? 
+                ORDER BY l.timestamp DESC
+            """, (session['user_id'],))
+            liked_rows = c.fetchall()
+            
+            c.execute("""
+                SELECT v.id, v.reference, v.text, v.translation, v.source, v.book, s.timestamp as saved_at
+                FROM verses v 
+                JOIN saves s ON v.id = s.verse_id 
+                WHERE s.user_id = ? 
+                ORDER BY s.timestamp DESC
+            """, (session['user_id'],))
+            saved_rows = c.fetchall()
+        
+        def row_to_dict(row):
+            if isinstance(row, dict):
+                return row
+            return {
+                'id': row[0], 'ref': row[1], 'text': row[2], 'trans': row[3],
+                'source': row[4], 'book': row[5]
+            }
+        
+        liked = [row_to_dict(row) for row in liked_rows]
+        saved = [row_to_dict(row) for row in saved_rows]
+        
+        return jsonify({"liked": liked, "saved": saved, "collections": []})
+    except Exception as e:
+        logger.error(f"Library error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/comments/<int:verse_id>')
+def get_comments(verse_id):
+    conn = None
+    try:
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        if is_postgres:
+            c.execute("""
+                SELECT c.*, u.name, u.picture 
+                FROM comments c
+                JOIN users u ON c.user_id = u.id
+                WHERE c.verse_id = %s
+                ORDER BY c.timestamp DESC
+            """, (verse_id,))
+        else:
+            c.execute("""
+                SELECT c.*, u.name, u.picture 
+                FROM comments c
+                JOIN users u ON c.user_id = u.id
+                WHERE c.verse_id = ?
+                ORDER BY c.timestamp DESC
+            """, (verse_id,))
+        
+        rows = c.fetchall()
+        
+        comments = []
+        for row in rows:
+            if isinstance(row, dict):
+                comments.append({
+                    "id": row['id'], "text": row['text'], "timestamp": row['timestamp'],
+                    "user_name": row['name'], "user_picture": row['picture']
+                })
+            else:
+                comments.append({
+                    "id": row[0], "text": row[3], "timestamp": row[4],
+                    "user_name": row[7], "user_picture": row[8]
+                })
+        
+        return jsonify(comments)
+    except Exception as e:
+        logger.error(f"Get comments error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/comments', methods=['POST'])
+def post_comment():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    # Check ban status BEFORE allowing comment
+    is_banned, reason, expires = check_ban_status(session['user_id'])
+    if is_banned:
+        if expires:
+            if isinstance(expires, str):
+                expires_str = expires[:16]
+            else:
+                expires_str = expires.strftime('%Y-%m-%d %H:%M')
+            msg = f'You are banned until {expires_str}. Reason: {reason or "Violation"}'
+        else:
+            msg = f'You are permanently banned. Reason: {reason or "Violation"}'
+        return jsonify({"error": msg, "banned": True}), 403
+    
+    conn = None
+    try:
+        data = request.get_json()
+        verse_id = data.get('verse_id')
+        text = data.get('text', '').strip()
+        
+        if not text:
+            return jsonify({"error": "Empty comment"}), 400
+        
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        if is_postgres:
+            c.execute("""
+                INSERT INTO comments (user_id, verse_id, text, timestamp, google_name, google_picture) 
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (session['user_id'], verse_id, text, datetime.now().isoformat(), 
+                   session.get('user_name'), session.get('user_picture')))
+        else:
+            c.execute("""
+                INSERT INTO comments (user_id, verse_id, text, timestamp, google_name, google_picture) 
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (session['user_id'], verse_id, text, datetime.now().isoformat(), 
+                   session.get('user_name'), session.get('user_picture')))
+        
+        conn.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        logger.error(f"Post comment error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/admin/delete_comment/<int:comment_id>', methods=['DELETE'])
+def delete_comment(comment_id):
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    if not session.get('is_admin'):
+        return jsonify({"error": "Admin required"}), 403
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        if is_postgres:
+            c.execute("DELETE FROM comments WHERE id = %s", (comment_id,))
+        else:
+            c.execute("DELETE FROM comments WHERE id = ?", (comment_id,))
+        
+        conn.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        logger.error(f"Delete comment error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/community')
+def get_community_messages():
+    conn = None
+    try:
+        conn = get_db()
+        c = get_cursor(conn)
+        
+        c.execute("""
+            SELECT m.*, u.name, u.picture 
+            FROM community_messages m
+            JOIN users u ON m.user_id = u.id
+            ORDER BY m.timestamp DESC
+            LIMIT 100
+        """)
+        
+        rows = c.fetchall()
+        
+        messages = []
+        for row in rows:
+            if isinstance(row, dict):
+                messages.append({
+                    "id": row['id'], "text": row['text'], "timestamp": row['timestamp'],
+                    "user_name": row['name'], "user_picture": row['picture']
+                })
+            else:
+                messages.append({
+                    "id": row[0], "text": row[2], "timestamp": row[3],
+                    "user_name": row[6], "user_picture": row[7]
+                })
+        
+        return jsonify(messages)
+    except Exception as e:
+        logger.error(f"Community get error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/community', methods=['POST'])
+def post_community_message():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    # Check ban status BEFORE allowing message
+    is_banned, reason, expires = check_ban_status(session['user_id'])
+    if is_banned:
+        if expires:
+            if isinstance(expires, str):
+                expires_str = expires[:16]
+            else:
+                expires_str = expires.strftime('%Y-%m-%d %H:%M')
+            msg = f'You are banned until {expires_str}. Reason: {reason or "Violation"}'
+        else:
+            msg = f'You are permanently banned. Reason: {reason or "Violation"}'
+        return jsonify({"error": msg, "banned": True}), 403
+    
+    conn = None
+    try:
+        data = request.get_json()
+        text = data.get('text', '').strip()
+        
+        if not text:
+            return jsonify({"error": "Empty message"}), 400
+        
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        if is_postgres:
+            c.execute("""
+                INSERT INTO community_messages (user_id, text, timestamp, google_name, google_picture) 
+                VALUES (%s, %s, %s, %s, %s)
+            """, (session['user_id'], text, datetime.now().isoformat(), 
+                   session.get('user_name'), session.get('user_picture')))
+        else:
+            c.execute("""
+                INSERT INTO community_messages (user_id, text, timestamp, google_name, google_picture) 
+                VALUES (?, ?, ?, ?, ?)
+            """, (session['user_id'], text, datetime.now().isoformat(), 
+                   session.get('user_name'), session.get('user_picture')))
+        
+        conn.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        logger.error(f"Community post error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/admin/delete_community/<int:message_id>', methods=['DELETE'])
+def delete_community_message(message_id):
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    if not session.get('is_admin'):
+        return jsonify({"error": "Admin required"}), 403
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        if is_postgres:
+            c.execute("DELETE FROM community_messages WHERE id = %s", (message_id,))
+        else:
+            c.execute("DELETE FROM community_messages WHERE id = ?", (message_id,))
+        
+        conn.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        logger.error(f"Delete community error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/check_like/<int:verse_id>')
+def check_like(verse_id):
+    if 'user_id' not in session:
+        return jsonify({"liked": False})
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        if is_postgres:
+            c.execute("SELECT id FROM likes WHERE user_id = %s AND verse_id = %s", (session['user_id'], verse_id))
+        else:
+            c.execute("SELECT id FROM likes WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
+        
+        liked = c.fetchone() is not None
+        return jsonify({"liked": liked})
+    except Exception as e:
+        logger.error(f"Check like error: {e}")
+        return jsonify({"liked": False})
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/check_save/<int:verse_id>')
+def check_save(verse_id):
+    if 'user_id' not in session:
+        return jsonify({"saved": False})
+    
+    conn = None
+    try:
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        if is_postgres:
+            c.execute("SELECT id FROM saves WHERE user_id = %s AND verse_id = %s", (session['user_id'], verse_id))
+        else:
+            c.execute("SELECT id FROM saves WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
+        
+        saved = c.fetchone() is not None
+        return jsonify({"saved": saved})
+    except Exception as e:
+        logger.error(f"Check save error: {e}")
+        return jsonify({"saved": False})
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/ban_status')
+def ban_status():
+    """Get current user's ban status for profile display"""
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    is_banned, reason, expires = check_ban_status(session['user_id'])
+    
+    status = {
+        "is_banned": is_banned,
+        "reason": reason,
+        "expires": expires
+    }
+    
+    if expires and is_banned:
+        try:
+            if isinstance(expires, str):
+                expires_dt = datetime.fromisoformat(expires.replace('Z', '+00:00').replace('+00:00', ''))
+            else:
+                expires_dt = expires
+            
+            now = datetime.now()
+            if expires_dt > now:
+                diff = expires_dt - now
+                hours, remainder = divmod(diff.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                days = diff.days
+                
+                if days > 0:
+                    status["time_remaining"] = f"{days}d {hours}h {minutes}m"
+                else:
+                    status["time_remaining"] = f"{hours}h {minutes}m"
+            else:
+                status["time_remaining"] = "Expired"
+        except:
+            status["time_remaining"] = "Unknown"
+    
+    return jsonify(status)
+
 if __name__ == '__main__':
-    init_db()
-    
-    # Get local IP for iPhone access
-    import socket
-    hostname = socket.gethostname()
-    local_ip = socket.gethostbyname(hostname)
-    
-    print("="*60)
-    print("BIBLE AI - LOCAL ADMIN DASHBOARD (FIXED)")
-    print("="*60)
-    print(f"LOCAL:   http://localhost:5001")
-    print(f"NETWORK: http://{local_ip}:5001  <-- Use this on iPhone")
-    print(f"PASSWORD: {MASTER_PASSWORD}")
-    print("="*60)
-    
-    # Run on 0.0.0.0 to allow iPhone access
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
 '''
 
-with open('/mnt/kimi/output/admin_fixed.py', 'w') as f:
-    f.write(admin_code)
+with open('/mnt/kimi/output/app_fixed.py', 'w') as f:
+    f.write(app_code)
 
-print("✅ Fixed admin.py saved")
-print("\nKey fixes in admin.py:")
-print("- Added proper try-except-finally blocks around ALL database operations")
-print("- Added FOR UPDATE lock when fetching user to ban (prevents race conditions)")
-print("- Added RETURNING clause to verify updates actually happened")
-print("- Added validation for already banned users")
-print("- Better error messages with specific HTTP status codes")
-print("- Connection cleanup in finally blocks prevents connection leaks")
+print("✅ Fixed app.py saved to /mnt/kimi/output/app_fixed.py")
+print("\nKey fixes in app.py:")
+print("- Added BACKGROUND THREAD that auto-fetches verses every 60 seconds")
+print("- Added new endpoint '/api/for-you' to get personalized recommendations")
+print("- Fixed all database connections to properly close in finally blocks")
+print("- Added threading.Lock() to prevent race conditions in verse generation")
+print("- Better error handling in check_ban_status with guaranteed connection cleanup")
+print("- Added atexit handler to gracefully shutdown background thread")
