@@ -1,5 +1,4 @@
-
-app_code = r'''from flask import Flask, render_template, jsonify, request, redirect, url_for, session, send_from_directory, abort, flash
+from flask import Flask, render_template, jsonify, request, redirect, url_for, session, send_from_directory, abort, flash
 import sqlite3
 import time
 import threading
@@ -1502,17 +1501,3 @@ def ban_status():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
-'''
-
-with open('/mnt/kimi/output/app_fixed.py', 'w') as f:
-    f.write(app_code)
-
-print("✅ Fixed app.py saved to /mnt/kimi/output/app_fixed.py")
-print("\nKey fixes in app.py:")
-print("1. Added BACKGROUND THREAD (BibleGenerator.start_background_fetcher) that auto-fetches verses every 60 seconds")
-print("2. Added new API endpoint '/api/for-you' to get personalized verse recommendations")
-print("3. Fixed ALL database connections to properly close in finally blocks")
-print("4. Added threading.Lock() to prevent race conditions in verse generation")
-print("5. Better error handling in check_ban_status with guaranteed connection cleanup")
-print("6. Added atexit handler to gracefully shutdown background thread")
-print("\nTo use the 'For You' tab in your frontend, call: GET /api/for-you")
