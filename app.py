@@ -51,49 +51,92 @@ else:
         return conn
 def init_db():
     conn = get_db()
-    c = conn.cursor()
     
-    c.execute('''CREATE TABLE IF NOT EXISTS verses 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, reference TEXT, text TEXT, 
-                  translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
+    # Check if PostgreSQL or SQLite
+    is_postgres = DATABASE_URL and DATABASE_URL.startswith('postgres')
     
-    c.execute('''CREATE TABLE IF NOT EXISTS users 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, google_id TEXT UNIQUE, email TEXT, 
-                  name TEXT, picture TEXT, created_at TEXT, is_admin INTEGER DEFAULT 0)''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS likes 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER, 
-                  timestamp TEXT, UNIQUE(user_id, verse_id))''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS saves 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER, 
-                  timestamp TEXT, UNIQUE(user_id, verse_id))''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS comments 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER,
-                  text TEXT, timestamp TEXT, google_name TEXT, google_picture TEXT)''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS collections 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, 
-                  color TEXT, created_at TEXT)''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS verse_collections 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, collection_id INTEGER, verse_id INTEGER,
-                  UNIQUE(collection_id, verse_id))''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS verse_sessions 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, verse_id INTEGER, session_id TEXT,
-                  created_at TEXT, expires_at TEXT)''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, text TEXT, 
-                  timestamp TEXT, google_name TEXT, google_picture TEXT)''')
-    
-    try:
-        c.execute("SELECT is_admin FROM users LIMIT 1")
-    except sqlite3.OperationalError:
-        c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
-        print("Migrated: Added is_admin column to users table")
+    if is_postgres:
+        c = conn.cursor()
+        # PostgreSQL syntax (SERIAL instead of AUTOINCREMENT)
+        c.execute('''CREATE TABLE IF NOT EXISTS verses 
+                     (id SERIAL PRIMARY KEY, reference TEXT, text TEXT, 
+                      translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS users 
+                     (id SERIAL PRIMARY KEY, google_id TEXT UNIQUE, email TEXT, 
+                      name TEXT, picture TEXT, created_at TEXT, is_admin INTEGER DEFAULT 0)''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS likes 
+                     (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER, 
+                      timestamp TEXT, UNIQUE(user_id, verse_id))''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS saves 
+                     (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER, 
+                      timestamp TEXT, UNIQUE(user_id, verse_id))''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS comments 
+                     (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER,
+                      text TEXT, timestamp TEXT, google_name TEXT, google_picture TEXT)''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS collections 
+                     (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, 
+                      color TEXT, created_at TEXT)''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS verse_collections 
+                     (id SERIAL PRIMARY KEY, collection_id INTEGER, verse_id INTEGER,
+                      UNIQUE(collection_id, verse_id))''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS verse_sessions 
+                     (id SERIAL PRIMARY KEY, verse_id INTEGER, session_id TEXT,
+                      created_at TEXT, expires_at TEXT)''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
+                     (id SERIAL PRIMARY KEY, user_id INTEGER, text TEXT, 
+                      timestamp TEXT, google_name TEXT, google_picture TEXT)''')
+    else:
+        c = conn.cursor()
+        # SQLite syntax
+        c.execute('''CREATE TABLE IF NOT EXISTS verses 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, reference TEXT, text TEXT, 
+                      translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS users 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, google_id TEXT UNIQUE, email TEXT, 
+                      name TEXT, picture TEXT, created_at TEXT, is_admin INTEGER DEFAULT 0)''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS likes 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER, 
+                      timestamp TEXT, UNIQUE(user_id, verse_id))''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS saves 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER, 
+                      timestamp TEXT, UNIQUE(user_id, verse_id))''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS comments 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER,
+                      text TEXT, timestamp TEXT, google_name TEXT, google_picture TEXT)''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS collections 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, 
+                      color TEXT, created_at TEXT)''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS verse_collections 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, collection_id INTEGER, verse_id INTEGER,
+                      UNIQUE(collection_id, verse_id))''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS verse_sessions 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, verse_id INTEGER, session_id TEXT,
+                      created_at TEXT, expires_at TEXT)''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, text TEXT, 
+                      timestamp TEXT, google_name TEXT, google_picture TEXT)''')
+        
+        # Migration for SQLite
+        try:
+            c.execute("SELECT is_admin FROM users LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
     
     conn.commit()
     conn.close()
@@ -833,6 +876,7 @@ if __name__ == '__main__':
         print(f"Open http://localhost:5000")
     
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)
+
 
 
 
