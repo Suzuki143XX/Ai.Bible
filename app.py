@@ -23,11 +23,7 @@ GOOGLE_CLIENT_ID = "420462376171-neu8kbc7cm1geu2ov70gd10fh9e2210i.apps.googleuse
 GOOGLE_CLIENT_SECRET = "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"
 STATIC_DOMAIN = "aibible.onrender.com"
 PUBLIC_URL = "https://aibible.onrender.com"
-
-GOOGLE_CLIENT_ID = "420462376171-hpsgp580an2douisas893bqiki92ccsv.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET = "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"
 GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
-
 ADMIN_CODE = "God Is All"
 
 db_path = os.path.join(os.path.dirname(__file__), "bible_ios.db")
@@ -821,4 +817,5 @@ if __name__ == '__main__':
         print(f"Open http://localhost:5000")
     
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)
+
 
