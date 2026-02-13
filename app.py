@@ -9,7 +9,6 @@ import secrets
 import json
 import random
 from datetime import datetime
-from pyngrok import ngrok, conf
 
 app = Flask(__name__)
 from datetime import timedelta
@@ -77,7 +76,6 @@ def init_db():
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, text TEXT, 
                   timestamp TEXT, google_name TEXT, google_picture TEXT)''')
     
-    # Migration: Add is_admin column if it doesn't exist (for existing databases)
     try:
         c.execute("SELECT is_admin FROM users LIMIT 1")
     except sqlite3.OperationalError:
@@ -110,7 +108,6 @@ class BibleGenerator:
         self.interval = max(30, min(300, int(seconds)))
     
     def get_time_left(self):
-        """Calculate time left based on database expires_at"""
         try:
             conn = get_db()
             c = conn.cursor()
@@ -129,7 +126,6 @@ class BibleGenerator:
             return self.interval
     
     def check_and_update(self):
-        """Check if it's time for a new verse (call this on every API request)"""
         if self.get_time_left() <= 0:
             self.fetch_verse()
     
@@ -367,7 +363,6 @@ def callback():
     session['user_id'] = user['id']
     session['user_name'] = user['name']
     session['user_picture'] = user['picture']
-    # Safe check for is_admin column
     session['is_admin'] = bool(user['is_admin']) if user.keys() and 'is_admin' in user.keys() else False
     return redirect(url_for('index'))   
 
@@ -381,7 +376,6 @@ def get_current():
     if 'user_id' not in session:
         return jsonify({"error": "Not logged in"}), 401
     
-    # Check if time expired and fetch new verse if needed
     generator.check_and_update()
     
     return jsonify({
@@ -397,7 +391,6 @@ def set_interval():
     if 'user_id' not in session:
         return jsonify({"error": "Not logged in"}), 401
     
-    # Only admin can change interval
     if not session.get('is_admin'):
         return jsonify({"error": "Admin required"}), 403
     
@@ -418,7 +411,6 @@ def get_user_info():
     conn.close()
     
     if row:
-        # Safe check for is_admin column
         is_admin_val = bool(row['is_admin']) if row.keys() and 'is_admin' in row.keys() else False
         return jsonify({
             "created_at": row['created_at'],
@@ -537,7 +529,6 @@ def get_library():
     saved = [{"id": row['id'], "ref": row['reference'], "text": row['text'], "trans": row['translation'], 
               "source": row['source'], "book": row['book'], "liked_at": None, "saved_at": row['saved_at']} for row in c.fetchall()]
     
-    # Get only user-created collections (excluding auto-generated book collections with user_id=0)
     c.execute("""
         SELECT c.id, c.name, c.color, COUNT(vc.verse_id) as count 
         FROM collections c
@@ -608,7 +599,6 @@ def delete_collection():
     
     conn = get_db()
     c = conn.cursor()
-    # Verify ownership
     c.execute("SELECT user_id FROM collections WHERE id = ?", (collection_id,))
     row = c.fetchone()
     if not row or row['user_id'] != session['user_id']:
@@ -806,23 +796,27 @@ def check_save(verse_id):
     conn.close()
     return jsonify({"saved": saved})
 
+# This section only runs for local development
 if __name__ == '__main__':
     print("\n" + "="*70)
     print("BIBLE AI - DESKTOP & MOBILE EDITION")
     print("="*70)
-    conf.get_default().auth_token = NGROK_AUTHTOKEN
     
+    # Only use ngrok for local development (not on Render)
     try:
+        from pyngrok import ngrok, conf
+        conf.get_default().auth_token = NGROK_AUTHTOKEN
         public_url = ngrok.connect(5000, bind_tls=True, domain=STATIC_DOMAIN)
         print(f"\n{'='*70}")
         print(f"LIVE AT: {PUBLIC_URL}")
         print(f"{'='*70}")
-        print("Features: Admin Panel | Favorites Collection | Permanent Timer")
-        print("Admin Code: 'God Is All'")
+        import webbrowser
+        webbrowser.open(PUBLIC_URL)
+    except ImportError:
+        print("Running without ngrok (local mode)")
+        print(f"Open http://localhost:5000")
     except Exception as e:
-        print(f"Ngrok Error: {e}")
-        public_url = ngrok.connect(5000, bind_tls=True)
+        print(f"Error: {e}")
+        print(f"Open http://localhost:5000")
     
-    import webbrowser
-    webbrowser.open(PUBLIC_URL)
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)
