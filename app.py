@@ -1,5 +1,5 @@
 
-app_code = '''from flask import Flask, render_template, jsonify, request, redirect, url_for, session, send_from_directory, abort, flash
+app_code = r'''from flask import Flask, render_template, jsonify, request, redirect, url_for, session, send_from_directory, abort, flash
 import sqlite3
 import time
 import threading
@@ -74,34 +74,34 @@ def init_db():
         is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
         
         if is_postgres:
-            c.execute('''CREATE TABLE IF NOT EXISTS verses 
+            c.execute("""CREATE TABLE IF NOT EXISTS verses 
                          (id SERIAL PRIMARY KEY, reference TEXT, text TEXT, 
-                          translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS users 
+                          translation TEXT, source TEXT, timestamp TEXT, book TEXT)""")
+            c.execute("""CREATE TABLE IF NOT EXISTS users 
                          (id SERIAL PRIMARY KEY, google_id TEXT UNIQUE, email TEXT, 
                           name TEXT, picture TEXT, created_at TEXT, is_admin INTEGER DEFAULT 0,
-                          is_banned BOOLEAN DEFAULT FALSE, ban_expires_at TIMESTAMP, ban_reason TEXT, role TEXT DEFAULT 'user')''')
-            c.execute('''CREATE TABLE IF NOT EXISTS likes 
+                          is_banned BOOLEAN DEFAULT FALSE, ban_expires_at TIMESTAMP, ban_reason TEXT, role TEXT DEFAULT 'user')""")
+            c.execute("""CREATE TABLE IF NOT EXISTS likes 
                          (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER, 
-                          timestamp TEXT, UNIQUE(user_id, verse_id))''')
-            c.execute('''CREATE TABLE IF NOT EXISTS saves 
+                          timestamp TEXT, UNIQUE(user_id, verse_id))""")
+            c.execute("""CREATE TABLE IF NOT EXISTS saves 
                          (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER, 
-                          timestamp TEXT, UNIQUE(user_id, verse_id))''')
-            c.execute('''CREATE TABLE IF NOT EXISTS comments 
+                          timestamp TEXT, UNIQUE(user_id, verse_id))""")
+            c.execute("""CREATE TABLE IF NOT EXISTS comments 
                          (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER,
-                          text TEXT, timestamp TEXT, google_name TEXT, google_picture TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS collections 
+                          text TEXT, timestamp TEXT, google_name TEXT, google_picture TEXT)""")
+            c.execute("""CREATE TABLE IF NOT EXISTS collections 
                          (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, 
-                          color TEXT, created_at TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS verse_collections 
+                          color TEXT, created_at TEXT)""")
+            c.execute("""CREATE TABLE IF NOT EXISTS verse_collections 
                          (id SERIAL PRIMARY KEY, collection_id INTEGER, verse_id INTEGER,
-                          UNIQUE(collection_id, verse_id))''')
-            c.execute('''CREATE TABLE IF NOT EXISTS verse_sessions 
+                          UNIQUE(collection_id, verse_id))""")
+            c.execute("""CREATE TABLE IF NOT EXISTS verse_sessions 
                          (id SERIAL PRIMARY KEY, verse_id INTEGER, session_id TEXT,
-                          created_at TEXT, expires_at TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
+                          created_at TEXT, expires_at TEXT)""")
+            c.execute("""CREATE TABLE IF NOT EXISTS community_messages 
                          (id SERIAL PRIMARY KEY, user_id INTEGER, text TEXT, 
-                          timestamp TEXT, google_name TEXT, google_picture TEXT)''')
+                          timestamp TEXT, google_name TEXT, google_picture TEXT)""")
             
             # Add missing columns if they don't exist
             try:
@@ -118,34 +118,34 @@ def init_db():
                 c.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
                 logger.info("Added role column")
         else:
-            c.execute('''CREATE TABLE IF NOT EXISTS verses 
+            c.execute("""CREATE TABLE IF NOT EXISTS verses 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, reference TEXT, text TEXT, 
-                          translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS users 
+                          translation TEXT, source TEXT, timestamp TEXT, book TEXT)""")
+            c.execute("""CREATE TABLE IF NOT EXISTS users 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, google_id TEXT UNIQUE, email TEXT, 
                           name TEXT, picture TEXT, created_at TEXT, is_admin INTEGER DEFAULT 0,
-                          is_banned INTEGER DEFAULT 0, ban_expires_at TEXT, ban_reason TEXT, role TEXT DEFAULT 'user')''')
-            c.execute('''CREATE TABLE IF NOT EXISTS likes 
+                          is_banned INTEGER DEFAULT 0, ban_expires_at TEXT, ban_reason TEXT, role TEXT DEFAULT 'user')""")
+            c.execute("""CREATE TABLE IF NOT EXISTS likes 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER, 
-                          timestamp TEXT, UNIQUE(user_id, verse_id))''')
-            c.execute('''CREATE TABLE IF NOT EXISTS saves 
+                          timestamp TEXT, UNIQUE(user_id, verse_id))""")
+            c.execute("""CREATE TABLE IF NOT EXISTS saves 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER, 
-                          timestamp TEXT, UNIQUE(user_id, verse_id))''')
-            c.execute('''CREATE TABLE IF NOT EXISTS comments 
+                          timestamp TEXT, UNIQUE(user_id, verse_id))""")
+            c.execute("""CREATE TABLE IF NOT EXISTS comments 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER,
-                          text TEXT, timestamp TEXT, google_name TEXT, google_picture TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS collections 
+                          text TEXT, timestamp TEXT, google_name TEXT, google_picture TEXT)""")
+            c.execute("""CREATE TABLE IF NOT EXISTS collections 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, 
-                          color TEXT, created_at TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS verse_collections 
+                          color TEXT, created_at TEXT)""")
+            c.execute("""CREATE TABLE IF NOT EXISTS verse_collections 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, collection_id INTEGER, verse_id INTEGER,
-                          UNIQUE(collection_id, verse_id))''')
-            c.execute('''CREATE TABLE IF NOT EXISTS verse_sessions 
+                          UNIQUE(collection_id, verse_id))""")
+            c.execute("""CREATE TABLE IF NOT EXISTS verse_sessions 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, verse_id INTEGER, session_id TEXT,
-                          created_at TEXT, expires_at TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
+                          created_at TEXT, expires_at TEXT)""")
+            c.execute("""CREATE TABLE IF NOT EXISTS community_messages 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, text TEXT, 
-                          timestamp TEXT, google_name TEXT, google_picture TEXT)''')
+                          timestamp TEXT, google_name TEXT, google_picture TEXT)""")
         
         conn.commit()
         logger.info("Database initialized")
@@ -336,7 +336,7 @@ class BibleGenerator:
                 pass
     
     def extract_book(self, ref):
-        match = re.match(r'^([0-9]?\\s?[A-Za-z]+)', ref)
+        match = re.match(r'^([0-9]?\s?[A-Za-z]+)', ref)
         return match.group(1) if match else "Unknown"
     
     def fetch_verse(self):
@@ -1509,9 +1509,10 @@ with open('/mnt/kimi/output/app_fixed.py', 'w') as f:
 
 print("✅ Fixed app.py saved to /mnt/kimi/output/app_fixed.py")
 print("\nKey fixes in app.py:")
-print("- Added BACKGROUND THREAD that auto-fetches verses every 60 seconds")
-print("- Added new endpoint '/api/for-you' to get personalized recommendations")
-print("- Fixed all database connections to properly close in finally blocks")
-print("- Added threading.Lock() to prevent race conditions in verse generation")
-print("- Better error handling in check_ban_status with guaranteed connection cleanup")
-print("- Added atexit handler to gracefully shutdown background thread")
+print("1. Added BACKGROUND THREAD (BibleGenerator.start_background_fetcher) that auto-fetches verses every 60 seconds")
+print("2. Added new API endpoint '/api/for-you' to get personalized verse recommendations")
+print("3. Fixed ALL database connections to properly close in finally blocks")
+print("4. Added threading.Lock() to prevent race conditions in verse generation")
+print("5. Better error handling in check_ban_status with guaranteed connection cleanup")
+print("6. Added atexit handler to gracefully shutdown background thread")
+print("\nTo use the 'For You' tab in your frontend, call: GET /api/for-you")
