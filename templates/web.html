@@ -1576,7 +1576,13 @@
                         <div class="stat-value" id="statComments" style="color: var(--success);">0</div>
                         <div class="stat-label">Comments</div>
                     </div>
-                </div>
+                </div><!-- Ban Status Display -->
+<div id="banStatus" style="display: none; background: linear-gradient(135deg, #ff416c, #ff4b2b); border-radius: 16px; padding: 24px; margin: 20px 0; text-align: center; color: white; box-shadow: 0 8px 32px rgba(255, 65, 108, 0.3);">
+    <div style="font-size: 48px; margin-bottom: 12px;">🚫</div>
+    <div style="font-size: 20px; font-weight: 700; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;">Account Suspended</div>
+    <div id="banReason" style="font-size: 14px; opacity: 0.9; margin-bottom: 12px;"></div>
+    <div id="banTimer" style="font-size: 18px; font-weight: 600; background: rgba(255,255,255,0.2); padding: 12px 24px; border-radius: 12px; display: inline-block;"></div>
+</div>
 
                 <button class="gen-btn" style="background: var(--danger);" onclick="logout()">
                     Log Out
@@ -1782,6 +1788,36 @@
     <!-- Toast -->
     <div class="toast" id="toast"></div>
 
+    function checkBanStatus() {
+    fetch('/api/ban_status')
+        .then(r => r.json())
+        .then(data => {
+            if (data.is_banned) {
+                const banDiv = document.getElementById('banStatus');
+                const reasonDiv = document.getElementById('banReason');
+                const timerDiv = document.getElementById('banTimer');
+                
+                if (banDiv) {
+                    banDiv.style.display = 'block';
+                    reasonDiv.textContent = data.reason ? 'Reason: ' + data.reason : 'Reason: Violation';
+                    
+                    if (data.time_remaining && data.time_remaining !== 'Expired') {
+                        timerDiv.textContent = 'Banned for: ' + data.time_remaining;
+                    } else if (data.expires) {
+                        timerDiv.textContent = 'Until: ' + new Date(data.expires).toLocaleString();
+                    } else {
+                        timerDiv.textContent = 'Permanent Ban';
+                    }
+                }
+            }
+        })
+        .catch(e => console.error('Ban check error:', e));
+}
+
+// Call when profile is shown
+if (document.getElementById('banStatus')) {
+    checkBanStatus();
+}
     <script>
         // State
         let currentVerse = null;
@@ -1869,6 +1905,8 @@
             updateTimeOnSite();
             timerInterval = setInterval(updateTimeOnSite, 1000);
         }
+
+    
 
         function updateTimeOnSite() {
             const now = Date.now();
