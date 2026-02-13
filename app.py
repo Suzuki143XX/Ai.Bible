@@ -8,26 +8,28 @@ import re
 import secrets
 import json
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
+from pyngrok import ngrok, conf
 
 app = Flask(__name__)
-
-# Production: Use environment variables
-app.secret_key = os.environ.get("SECRET_KEY", "dev-key-replace-in-production")
+from datetime import timedelta
 app.permanent_session_lifetime = timedelta(days=30)
 
 @app.before_request
 def make_session_permanent():
     session.permanent = True
+app.secret_key = "bible-app-secret-key-2024-keep-this-safe"
 
-# Production: Environment-based config
-PUBLIC_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://localhost:5000")
-GOOGLE_CLIENT_ID = "420462376171-neu8kbc7cm1geu2ov70gd10fh9e2210i.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET = "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"
+NGROK_AUTHTOKEN = "39RM1j4eX4gSd3EornIUrB4JscD_2zi2uH4gtx5jTmJE67Tuw"
+STATIC_DOMAIN = "noncompressive-nonpolitically-richie.ngrok-free.dev"
+PUBLIC_URL = f"https://{STATIC_DOMAIN}"
+
+GOOGLE_CLIENT_ID = "420462376171-hpsgp580an2douisas893bqiki92ccsv.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "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"
 GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
-ADMIN_CODE = os.environ.get("ADMIN_CODE", "God Is All")
 
-# Database setup (Note: SQLite is ephemeral on Render free tier)
+ADMIN_CODE = "God Is All"
+
 db_path = os.path.join(os.path.dirname(__file__), "bible_ios.db")
 
 def get_db():
@@ -75,6 +77,7 @@ def init_db():
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, text TEXT, 
                   timestamp TEXT, google_name TEXT, google_picture TEXT)''')
     
+    # Migration: Add is_admin column if it doesn't exist (for existing databases)
     try:
         c.execute("SELECT is_admin FROM users LIMIT 1")
     except sqlite3.OperationalError:
@@ -83,20 +86,15 @@ def init_db():
     
     conn.commit()
     conn.close()
-
 init_db()
 
 class BibleGenerator:
     def __init__(self):
         self.running = True
         self.interval = 60
-        self.time_left = 60
         self.current_verse = None
         self.total_verses = 0
         self.session_id = secrets.token_hex(8)
-        self.thread = threading.Thread(target=self.loop)
-        self.thread.daemon = True
-        self.thread.start()
         
         self.networks = [
             {"name": "Bible-API.com", "url": "https://bible-api.com/?random=verse"},
@@ -110,7 +108,30 @@ class BibleGenerator:
     
     def set_interval(self, seconds):
         self.interval = max(30, min(300, int(seconds)))
-        self.time_left = min(self.time_left, self.interval)
+    
+    def get_time_left(self):
+        """Calculate time left based on database expires_at"""
+        try:
+            conn = get_db()
+            c = conn.cursor()
+            c.execute("SELECT expires_at FROM verse_sessions WHERE session_id = ? ORDER BY created_at DESC LIMIT 1", 
+                      (self.session_id,))
+            row = c.fetchone()
+            conn.close()
+            
+            if row:
+                expires = datetime.fromisoformat(row['expires_at'])
+                now = datetime.now()
+                diff = (expires - now).total_seconds()
+                return max(0, int(diff))
+            return self.interval
+        except:
+            return self.interval
+    
+    def check_and_update(self):
+        """Check if it's time for a new verse (call this on every API request)"""
+        if self.get_time_left() <= 0:
+            self.fetch_verse()
     
     def extract_book(self, ref):
         match = re.match(r'^([0-9]?\s?[A-Za-z]+)', ref)
@@ -213,18 +234,6 @@ class BibleGenerator:
                 "reason": f"Because you like {row['book']}" if preferred_books else "Recommended for you"
             }
         return None
-    
-    def loop(self):
-        while self.running:
-            try:
-                if self.time_left <= 0:
-                    self.fetch_verse()
-                    self.time_left = self.interval
-                else:
-                    self.time_left -= 1
-            except Exception as e:
-                print(f"Loop error: {e}")
-            time.sleep(1)
 
 generator = BibleGenerator()
 
@@ -277,9 +286,6 @@ def login():
 
 @app.route('/google-login')
 def google_login():
-    if not GOOGLE_CLIENT_ID:
-        return "Google OAuth not configured. Set GOOGLE_CLIENT_ID environment variable.", 500
-        
     google_provider_cfg = requests.get(GOOGLE_DISCOVERY_URL).json()
     authorization_endpoint = google_provider_cfg["authorization_endpoint"]
     callback_url = PUBLIC_URL + "/callback"
@@ -361,6 +367,7 @@ def callback():
     session['user_id'] = user['id']
     session['user_name'] = user['name']
     session['user_picture'] = user['picture']
+    # Safe check for is_admin column
     session['is_admin'] = bool(user['is_admin']) if user.keys() and 'is_admin' in user.keys() else False
     return redirect(url_for('index'))   
 
@@ -373,9 +380,13 @@ def logout():
 def get_current():
     if 'user_id' not in session:
         return jsonify({"error": "Not logged in"}), 401
+    
+    # Check if time expired and fetch new verse if needed
+    generator.check_and_update()
+    
     return jsonify({
         "verse": generator.current_verse,
-        "countdown": generator.time_left,
+        "countdown": generator.get_time_left(),
         "total_verses": generator.total_verses,
         "session_id": generator.session_id,
         "interval": generator.interval
@@ -386,6 +397,7 @@ def set_interval():
     if 'user_id' not in session:
         return jsonify({"error": "Not logged in"}), 401
     
+    # Only admin can change interval
     if not session.get('is_admin'):
         return jsonify({"error": "Admin required"}), 403
     
@@ -406,6 +418,7 @@ def get_user_info():
     conn.close()
     
     if row:
+        # Safe check for is_admin column
         is_admin_val = bool(row['is_admin']) if row.keys() and 'is_admin' in row.keys() else False
         return jsonify({
             "created_at": row['created_at'],
@@ -524,6 +537,7 @@ def get_library():
     saved = [{"id": row['id'], "ref": row['reference'], "text": row['text'], "trans": row['translation'], 
               "source": row['source'], "book": row['book'], "liked_at": None, "saved_at": row['saved_at']} for row in c.fetchall()]
     
+    # Get only user-created collections (excluding auto-generated book collections with user_id=0)
     c.execute("""
         SELECT c.id, c.name, c.color, COUNT(vc.verse_id) as count 
         FROM collections c
@@ -594,6 +608,7 @@ def delete_collection():
     
     conn = get_db()
     c = conn.cursor()
+    # Verify ownership
     c.execute("SELECT user_id FROM collections WHERE id = ?", (collection_id,))
     row = c.fetchone()
     if not row or row['user_id'] != session['user_id']:
@@ -791,12 +806,23 @@ def check_save(verse_id):
     conn.close()
     return jsonify({"saved": saved})
 
-# Production entry point for Render
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-
-    app.run(host='0.0.0.0', port=port, debug=False)
-
-
-
-
+    print("\n" + "="*70)
+    print("BIBLE AI - DESKTOP & MOBILE EDITION")
+    print("="*70)
+    conf.get_default().auth_token = NGROK_AUTHTOKEN
+    
+    try:
+        public_url = ngrok.connect(5000, bind_tls=True, domain=STATIC_DOMAIN)
+        print(f"\n{'='*70}")
+        print(f"LIVE AT: {PUBLIC_URL}")
+        print(f"{'='*70}")
+        print("Features: Admin Panel | Favorites Collection | Permanent Timer")
+        print("Admin Code: 'God Is All'")
+    except Exception as e:
+        print(f"Ngrok Error: {e}")
+        public_url = ngrok.connect(5000, bind_tls=True)
+    
+    import webbrowser
+    webbrowser.open(PUBLIC_URL)
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)
