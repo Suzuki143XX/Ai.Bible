@@ -12,7 +12,6 @@ import logging
 from datetime import datetime, timedelta
 from functools import wraps
 
-# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -23,23 +22,15 @@ app.permanent_session_lifetime = timedelta(days=30)
 def make_session_permanent():
     session.permanent = True
 
-# Use environment variable for secret key in production
-app.secret_key = os.environ.get("SECRET_KEY", "bible-app-secret-key-2024-keep-this-safe")
-
+app.secret_key = os.environ.get("SECRET_KEY", "bible-app-secret-key-2024")
 STATIC_DOMAIN = os.environ.get("STATIC_DOMAIN", "aibible.onrender.com")
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://aibible.onrender.com")
-
-# Google OAuth (should also be env vars in production)
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
-
 ADMIN_CODE = os.environ.get("ADMIN_CODE", "God Is All")
-
-# Database setup - PostgreSQL on Render, SQLite locally
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
-# Fix for Render's postgres:// vs postgresql:// issue
 if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
 
@@ -49,7 +40,6 @@ def get_db():
     if DATABASE_URL and ('postgresql' in DATABASE_URL):
         import psycopg2
         import psycopg2.extras
-        # Enable SSL for Render PostgreSQL
         conn = psycopg2.connect(DATABASE_URL, sslmode='require')
         return conn
     else:
@@ -58,38 +48,19 @@ def get_db():
         return conn
 
 def get_cursor(conn):
-    """Get cursor compatible with connection type"""
     if DATABASE_URL and ('postgresql' in DATABASE_URL):
         return conn.cursor()
     else:
         return conn.cursor()
 
-def dict_from_row(row, cursor):
-    """Convert row to dict regardless of cursor type"""
-    if row is None:
-        return None
-    if isinstance(row, dict):
-        return row
-    if hasattr(row, 'keys'):
-        return dict(row)
-    # For sqlite3.Row or tuple
-    if hasattr(cursor, 'description') and cursor.description:
-        return {desc[0]: row[i] for i, desc in enumerate(cursor.description)}
-    return row
-
 def db_execute(c, sql, params=()):
-    """Execute SQL compatible with both SQLite and PostgreSQL"""
     is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
-    
     if is_postgres:
-        # Convert ? to %s for PostgreSQL
         sql = sql.replace('?', '%s')
-        # Convert SQLite's INSERT OR IGNORE to PostgreSQL's ON CONFLICT
         if 'INSERT OR IGNORE' in sql:
             sql = sql.replace('INSERT OR IGNORE', 'INSERT')
             if 'UNIQUE' in sql or 'user_id' in sql or 'google_id' in sql:
                 sql += ' ON CONFLICT DO NOTHING'
-    
     c.execute(sql, params)
     return c
 
@@ -100,7 +71,6 @@ def init_db():
         is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
         
         if is_postgres:
-            # Create tables with ban support
             c.execute('''CREATE TABLE IF NOT EXISTS verses 
                          (id SERIAL PRIMARY KEY, reference TEXT, text TEXT, 
                           translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
@@ -130,14 +100,14 @@ def init_db():
                          (id SERIAL PRIMARY KEY, user_id INTEGER, text TEXT, 
                           timestamp TEXT, google_name TEXT, google_picture TEXT)''')
             
-            # Check if ban columns exist (for existing databases)
+            # Add ban columns if missing
             try:
                 c.execute("SELECT is_banned FROM users LIMIT 1")
             except:
                 c.execute("ALTER TABLE users ADD COLUMN is_banned BOOLEAN DEFAULT FALSE")
                 c.execute("ALTER TABLE users ADD COLUMN ban_expires_at TIMESTAMP")
                 c.execute("ALTER TABLE users ADD COLUMN ban_reason TEXT")
-                logger.info("Added ban columns to users table")
+                logger.info("Added ban columns")
         else:
             c.execute('''CREATE TABLE IF NOT EXISTS verses 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, reference TEXT, text TEXT, 
@@ -168,32 +138,24 @@ def init_db():
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, text TEXT, 
                           timestamp TEXT, google_name TEXT, google_picture TEXT)''')
             
-            # Check for ban columns in SQLite
             try:
                 c.execute("SELECT is_banned FROM users LIMIT 1")
             except sqlite3.OperationalError:
                 c.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0")
                 c.execute("ALTER TABLE users ADD COLUMN ban_expires_at TEXT")
                 c.execute("ALTER TABLE users ADD COLUMN ban_reason TEXT")
-                logger.info("Added ban columns to users table")
-            
-            try:
-                c.execute("SELECT is_admin FROM users LIMIT 1")
-            except sqlite3.OperationalError:
-                c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
         
         conn.commit()
         conn.close()
-        logger.info("Database initialized successfully with ban support")
+        logger.info("Database initialized with ban support")
     except Exception as e:
-        logger.error(f"Database initialization error: {e}")
+        logger.error(f"DB init error: {e}")
         raise
 
-# Initialize DB on startup
 init_db()
 
 def check_ban_status(user_id):
-    """Check if user is banned. Returns (is_banned, reason, expires) or (False, None, None)"""
+    """Check if user is banned. Returns (is_banned, reason, expires)"""
     try:
         conn = get_db()
         c = get_cursor(conn)
@@ -219,7 +181,7 @@ def check_ban_status(user_id):
             expires = row[1]
             reason = row[2]
         
-        # Check if ban expired
+        # Check if ban expired and auto-unban
         if is_banned and expires:
             if isinstance(expires, str):
                 expires_dt = datetime.fromisoformat(expires)
@@ -227,7 +189,6 @@ def check_ban_status(user_id):
                 expires_dt = expires
             
             if datetime.now() > expires_dt:
-                # Auto-unban
                 conn = get_db()
                 c = get_cursor(conn)
                 if is_postgres:
@@ -244,14 +205,18 @@ def check_ban_status(user_id):
         logger.error(f"Ban check error: {e}")
         return False, None, None
 
+# CRITICAL: This runs before EVERY request to check bans
 @app.before_request
 def check_user_banned():
-    """Check ban status before every request for logged in users"""
-    if 'user_id' in session and request.endpoint not in ['static', 'logout', 'login', 'callback', 'google_login']:
+    """Check ban status before every request"""
+    if 'user_id' in session:
+        # Skip ban check for login/logout pages
+        if request.endpoint in ['static', 'logout', 'login', 'callback', 'google_login']:
+            return
+            
         is_banned, reason, expires = check_ban_status(session['user_id'])
         
         if is_banned:
-            # Clear session
             session.clear()
             
             # Format message
@@ -260,10 +225,16 @@ def check_user_banned():
                     expires_str = expires
                 else:
                     expires_str = expires.strftime('%Y-%m-%d %H:%M')
-                flash(f'🚫 Your account has been banned until {expires_str}. Reason: {reason or "Violation of terms"}', 'error')
+                msg = f'Banned until {expires_str}. Reason: {reason or "Violation"}'
             else:
-                flash(f'🚫 Your account has been permanently banned. Reason: {reason or "Violation of terms"}', 'error')
+                msg = f'Permanently banned. Reason: {reason or "Violation"}'
             
+            # If API request, return JSON error
+            if request.path.startswith('/api/'):
+                return jsonify({"error": msg, "banned": True}), 403
+            
+            # If HTML request, flash and redirect
+            flash(f'🚫 {msg}', 'error')
             return redirect(url_for('login'))
 
 class BibleGenerator:
@@ -359,7 +330,6 @@ class BibleGenerator:
                 c = get_cursor(conn)
                 is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
                 
-                # Insert verse
                 if is_postgres:
                     c.execute("""
                         INSERT INTO verses (reference, text, translation, source, timestamp, book) 
@@ -374,7 +344,6 @@ class BibleGenerator:
                 
                 conn.commit()
                 
-                # Get verse ID
                 if is_postgres:
                     c.execute("SELECT id FROM verses WHERE reference = %s AND text = %s", (ref, text))
                 else:
@@ -389,7 +358,6 @@ class BibleGenerator:
                 self.session_id = secrets.token_hex(8)
                 expires = datetime.fromtimestamp(time.time() + self.interval).isoformat()
                 
-                # Insert session
                 if is_postgres:
                     c.execute("""
                         INSERT INTO verse_sessions (verse_id, session_id, created_at, expires_at) 
@@ -401,7 +369,6 @@ class BibleGenerator:
                         VALUES (?, ?, ?, ?)
                     """, (verse_id, self.session_id, datetime.now().isoformat(), expires))
                 
-                # Check/create collection
                 if is_postgres:
                     c.execute("SELECT id FROM collections WHERE name = %s AND user_id = 0", (book,))
                 else:
@@ -557,26 +524,11 @@ def index():
     if 'user_id' not in session:
         return redirect(url_for('login'))
     
-    # Check ban status
-    is_banned, reason, expires = check_ban_status(session['user_id'])
-    if is_banned:
-        session.clear()
-        if expires:
-            if isinstance(expires, str):
-                expires_str = expires
-            else:
-                expires_str = expires.strftime('%Y-%m-%d %H:%M')
-            flash(f'🚫 Your account has been banned until {expires_str}. Reason: {reason or "Violation of terms"}', 'error')
-        else:
-            flash(f'🚫 Your account has been permanently banned. Reason: {reason or "Violation of terms"}', 'error')
-        return redirect(url_for('login'))
-    
     try:
         conn = get_db()
         c = get_cursor(conn)
         is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
         
-        # Get user
         if is_postgres:
             c.execute("SELECT * FROM users WHERE id = %s", (session['user_id'],))
         else:
@@ -588,7 +540,6 @@ def index():
             conn.close()
             return redirect(url_for('login'))
         
-        # Convert user row to dict for consistent access
         if isinstance(user, dict):
             user_data = {
                 'id': user['id'],
@@ -598,7 +549,6 @@ def index():
                 'is_admin': bool(user.get('is_admin', 0))
             }
         else:
-            # SQLite row
             user_data = {
                 'id': user[0],
                 'email': user[2],
@@ -607,13 +557,9 @@ def index():
                 'is_admin': bool(user[6]) if len(user) > 6 else False
             }
         
-        # Get stats
         c.execute("SELECT COUNT(*) as count FROM verses")
         result = c.fetchone()
-        if isinstance(result, dict):
-            total_verses = result['count']
-        else:
-            total_verses = result[0]
+        total_verses = result['count'] if isinstance(result, dict) else result[0]
         
         if is_postgres:
             c.execute("SELECT COUNT(*) as count FROM likes WHERE user_id = %s", (session['user_id'],))
@@ -750,29 +696,19 @@ def callback():
                 c.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
             user = c.fetchone()
         
-        # Extract user id safely
         if isinstance(user, dict):
             user_id = user['id']
-            user_name = user['name']
-            user_picture = user['picture']
-            is_admin = bool(user.get('is_admin', 0))
             is_banned = bool(user.get('is_banned', False))
             ban_expires = user.get('ban_expires_at')
             ban_reason = user.get('ban_reason')
         else:
             user_id = user[0]
-            user_name = user[3]
-            user_picture = user[4]
-            is_admin = bool(user[6]) if len(user) > 6 else False
             is_banned = bool(user[7]) if len(user) > 7 else False
             ban_expires = user[8] if len(user) > 8 else None
             ban_reason = user[9] if len(user) > 9 else None
         
-        conn.close()
-        
-        # Check if banned BEFORE creating session
+        # Check ban before logging in
         if is_banned:
-            # Check if expired
             if ban_expires:
                 if isinstance(ban_expires, str):
                     expires_dt = datetime.fromisoformat(ban_expires)
@@ -780,56 +716,32 @@ def callback():
                     expires_dt = ban_expires
                 
                 if datetime.now() < expires_dt:
-                    # Still banned
                     if isinstance(ban_expires, str):
                         expires_str = ban_expires
                     else:
                         expires_str = ban_expires.strftime('%Y-%m-%d %H:%M')
                     return f"""
-                    <html>
-                    <head><title>Account Banned</title></head>
-                    <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1a1a1a; color: white;">
-                        <h1>🚫 Account Banned</h1>
-                        <p>Your account has been temporarily banned.</p>
-                        <p><strong>Reason:</strong> {ban_reason or 'Violation of terms'}</p>
-                        <p><strong>Expires:</strong> {expires_str}</p>
-                        <br>
-                        <a href="/" style="color: #4ECDC4;">Back to Home</a>
-                    </body>
-                    </html>
+                    <html><body style="text-align:center;padding:50px;">
+                        <h1>🚫 Banned</h1>
+                        <p>Until: {expires_str}</p>
+                        <p>Reason: {ban_reason or 'Violation'}</p>
+                        <a href="/">Home</a>
+                    </body></html>
                     """, 403
-                # Else: expired, allow login (will be auto-unbanned)
             else:
-                # Permanent ban
                 return f"""
-                <html>
-                <head><title>Account Banned</title></head>
-                <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1a1a1a; color: white;">
-                    <h1>🚫 Account Banned</h1>
-                    <p>Your account has been permanently banned.</p>
-                    <p><strong>Reason:</strong> {ban_reason or 'Violation of terms'}</p>
-                    <br>
-                    <a href="/" style="color: #4ECDC4;">Back to Home</a>
-                </body>
-                </html>
+                <html><body style="text-align:center;padding:50px;">
+                    <h1>🚫 Permanently Banned</h1>
+                    <p>Reason: {ban_reason or 'Violation'}</p>
+                    <a href="/">Home</a>
+                </body></html>
                 """, 403
         
-        # If we get here, not banned (or ban expired)
-        if is_banned and ban_expires and datetime.now() > expires_dt:
-            # Auto-unban expired ban
-            conn = get_db()
-            c = get_cursor(conn)
-            if is_postgres:
-                c.execute("UPDATE users SET is_banned = FALSE, ban_expires_at = NULL, ban_reason = NULL WHERE id = %s", (user_id,))
-            else:
-                c.execute("UPDATE users SET is_banned = 0, ban_expires_at = NULL, ban_reason = NULL WHERE id = ?", (user_id,))
-            conn.commit()
-            conn.close()
-        
+        conn.close()
         session['user_id'] = user_id
-        session['user_name'] = user_name
-        session['user_picture'] = user_picture
-        session['is_admin'] = is_admin
+        session['user_name'] = name
+        session['user_picture'] = picture
+        session['is_admin'] = bool(user[6]) if not isinstance(user, dict) else bool(user.get('is_admin', 0))
         return redirect(url_for('index'))
     except Exception as e:
         logger.error(f"Callback error: {e}")
@@ -847,7 +759,6 @@ def get_current():
     
     try:
         generator.check_and_update()
-        
         return jsonify({
             "verse": generator.current_verse,
             "countdown": generator.get_time_left(),
@@ -958,10 +869,6 @@ def get_stats():
             c.execute("SELECT COUNT(*) as count FROM saves WHERE user_id = %s", (session['user_id'],))
             result = c.fetchone()
             saved = result['count'] if isinstance(result, dict) else result[0]
-            
-            c.execute("SELECT COUNT(*) as count FROM comments WHERE user_id = %s", (session['user_id'],))
-            result = c.fetchone()
-            comments = result['count'] if isinstance(result, dict) else result[0]
         else:
             c.execute("SELECT COUNT(*) as count FROM likes WHERE user_id = ?", (session['user_id'],))
             result = c.fetchone()
@@ -970,13 +877,9 @@ def get_stats():
             c.execute("SELECT COUNT(*) as count FROM saves WHERE user_id = ?", (session['user_id'],))
             result = c.fetchone()
             saved = result['count'] if isinstance(result, dict) else result[0]
-            
-            c.execute("SELECT COUNT(*) as count FROM comments WHERE user_id = ?", (session['user_id'],))
-            result = c.fetchone()
-            comments = result['count'] if isinstance(result, dict) else result[0]
         
         conn.close()
-        return jsonify({"total_verses": total, "liked": liked, "saved": saved, "comments": comments})
+        return jsonify({"total_verses": total, "liked": liked, "saved": saved})
     except Exception as e:
         logger.error(f"Stats error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -1090,15 +993,6 @@ def get_library():
                 ORDER BY s.timestamp DESC
             """, (session['user_id'],))
             saved_rows = c.fetchall()
-            
-            c.execute("""
-                SELECT c.id, c.name, c.color, COUNT(vc.verse_id) as count 
-                FROM collections c
-                LEFT JOIN verse_collections vc ON c.id = vc.collection_id
-                WHERE c.user_id = %s
-                GROUP BY c.id
-            """, (session['user_id'],))
-            collections_rows = c.fetchall()
         else:
             c.execute("""
                 SELECT v.id, v.reference, v.text, v.translation, v.source, v.book, l.timestamp as liked_at
@@ -1117,220 +1011,22 @@ def get_library():
                 ORDER BY s.timestamp DESC
             """, (session['user_id'],))
             saved_rows = c.fetchall()
-            
-            c.execute("""
-                SELECT c.id, c.name, c.color, COUNT(vc.verse_id) as count 
-                FROM collections c
-                LEFT JOIN verse_collections vc ON c.id = vc.collection_id
-                WHERE c.user_id = ?
-                GROUP BY c.id
-            """, (session['user_id'],))
-            collections_rows = c.fetchall()
         
         def row_to_dict(row):
             if isinstance(row, dict):
                 return row
             return {
                 'id': row[0], 'ref': row[1], 'text': row[2], 'trans': row[3],
-                'source': row[4], 'book': row[5], 'liked_at': row[6] if len(row) > 6 else None,
-                'saved_at': row[6] if len(row) > 6 else None
+                'source': row[4], 'book': row[5]
             }
         
         liked = [row_to_dict(row) for row in liked_rows]
         saved = [row_to_dict(row) for row in saved_rows]
         
-        # Fix saved to have saved_at instead of liked_at
-        for i, row in enumerate(saved_rows):
-            if isinstance(row, dict):
-                saved[i]['liked_at'] = None
-                saved[i]['saved_at'] = row.get('saved_at')
-            else:
-                saved[i]['liked_at'] = None
-                saved[i]['saved_at'] = row[6] if len(row) > 6 else None
-        
-        collections = []
-        for row in collections_rows:
-            if isinstance(row, dict):
-                col_id = row['id']
-                col_name = row['name']
-                col_color = row['color']
-                col_count = row['count']
-            else:
-                col_id = row[0]
-                col_name = row[1]
-                col_color = row[2]
-                col_count = row[3]
-                
-            if is_postgres:
-                c.execute("""
-                    SELECT v.id, v.reference, v.text FROM verses v
-                    JOIN verse_collections vc ON v.id = vc.verse_id
-                    WHERE vc.collection_id = %s
-                """, (col_id,))
-            else:
-                c.execute("""
-                    SELECT v.id, v.reference, v.text FROM verses v
-                    JOIN verse_collections vc ON v.id = vc.verse_id
-                    WHERE vc.collection_id = ?
-                """, (col_id,))
-            verses = c.fetchall()
-            verse_list = [{'id': v[0], 'ref': v[1], 'text': v[2]} if not isinstance(v, dict) else v for v in verses]
-            
-            collections.append({
-                "id": col_id, 
-                "name": col_name, 
-                "color": col_color, 
-                "count": col_count, 
-                "verses": verse_list
-            })
-        
         conn.close()
-        return jsonify({"liked": liked, "saved": saved, "collections": collections})
+        return jsonify({"liked": liked, "saved": saved, "collections": []})
     except Exception as e:
         logger.error(f"Library error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/collections/add', methods=['POST'])
-def add_to_collection():
-    if 'user_id' not in session:
-        return jsonify({"error": "Not logged in"}), 401
-    try:
-        data = request.get_json()
-        collection_id = data.get('collection_id')
-        verse_id = data.get('verse_id')
-        
-        conn = get_db()
-        c = get_cursor(conn)
-        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
-        
-        if is_postgres:
-            c.execute("""
-                INSERT INTO verse_collections (collection_id, verse_id) 
-                VALUES (%s, %s)
-                ON CONFLICT DO NOTHING
-            """, (collection_id, verse_id))
-        else:
-            c.execute("""
-                INSERT OR IGNORE INTO verse_collections (collection_id, verse_id) 
-                VALUES (?, ?)
-            """, (collection_id, verse_id))
-        conn.commit()
-        conn.close()
-        return jsonify({"success": True})
-    except Exception as e:
-        logger.error(f"Collection add error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-@app.route('/api/collections/create', methods=['POST'])
-def create_collection():
-    if 'user_id' not in session:
-        return jsonify({"error": "Not logged in"}), 401
-    try:
-        data = request.get_json()
-        name = data.get('name')
-        color = data.get('color', '#0A84FF')
-        
-        conn = get_db()
-        c = get_cursor(conn)
-        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
-        
-        if is_postgres:
-            c.execute("""
-                INSERT INTO collections (user_id, name, color, created_at) 
-                VALUES (%s, %s, %s, %s)
-                RETURNING id
-            """, (session['user_id'], name, color, datetime.now().isoformat()))
-            new_id = c.fetchone()[0]
-        else:
-            c.execute("""
-                INSERT INTO collections (user_id, name, color, created_at) 
-                VALUES (?, ?, ?, ?)
-            """, (session['user_id'], name, color, datetime.now().isoformat()))
-            new_id = c.lastrowid
-        
-        conn.commit()
-        conn.close()
-        return jsonify({"id": new_id, "name": name, "color": color, "count": 0, "verses": []})
-    except Exception as e:
-        logger.error(f"Collection create error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/collections/delete', methods=['POST'])
-def delete_collection():
-    if 'user_id' not in session:
-        return jsonify({"error": "Not logged in"}), 401
-    try:
-        data = request.get_json()
-        collection_id = data.get('collection_id')
-        
-        conn = get_db()
-        c = get_cursor(conn)
-        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
-        
-        if is_postgres:
-            c.execute("SELECT user_id FROM collections WHERE id = %s", (collection_id,))
-        else:
-            c.execute("SELECT user_id FROM collections WHERE id = ?", (collection_id,))
-        row = c.fetchone()
-        
-        user_id = row['user_id'] if isinstance(row, dict) else row[0]
-        if not row or user_id != session['user_id']:
-            conn.close()
-            return jsonify({"error": "Unauthorized"}), 403
-        
-        if is_postgres:
-            c.execute("DELETE FROM verse_collections WHERE collection_id = %s", (collection_id,))
-            c.execute("DELETE FROM collections WHERE id = %s", (collection_id,))
-        else:
-            c.execute("DELETE FROM verse_collections WHERE collection_id = ?", (collection_id,))
-            c.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
-        
-        conn.commit()
-        conn.close()
-        return jsonify({"success": True})
-    except Exception as e:
-        logger.error(f"Collection delete error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/recommendations')
-def get_recommendations():
-    if 'user_id' not in session:
-        return jsonify([])
-    
-    try:
-        conn = get_db()
-        c = get_cursor(conn)
-        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
-        
-        if is_postgres:
-            c.execute("SELECT COUNT(*) FROM likes WHERE user_id = %s", (session['user_id'],))
-        else:
-            c.execute("SELECT COUNT(*) FROM likes WHERE user_id = ?", (session['user_id'],))
-        
-        row = c.fetchone()
-        has_likes = row[0] > 0 if not isinstance(row, dict) else row['count'] > 0
-        
-        conn.close()
-        
-        rec = generator.generate_smart_recommendation(session['user_id'])
-        if rec:
-            return jsonify({"has_likes": has_likes, "recommendations": [rec]})
-        return jsonify({"has_likes": has_likes, "recommendations": []})
-    except Exception as e:
-        logger.error(f"Recommendations error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/generate-recommendation', methods=['POST'])
-def generate_rec():
-    if 'user_id' not in session:
-        return jsonify({"error": "Not logged in"}), 401
-    try:
-        rec = generator.generate_smart_recommendation(session['user_id'])
-        if rec:
-            return jsonify({"success": True, "recommendation": rec})
-        return jsonify({"success": False})
-    except Exception as e:
-        logger.error(f"Gen rec error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/comments/<int:verse_id>')
@@ -1338,8 +1034,8 @@ def get_comments(verse_id):
     try:
         conn = get_db()
         c = get_cursor(conn)
-        
         is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
         if is_postgres:
             c.execute("""
                 SELECT c.*, u.name, u.picture 
@@ -1365,12 +1061,12 @@ def get_comments(verse_id):
             if isinstance(row, dict):
                 comments.append({
                     "id": row['id'], "text": row['text'], "timestamp": row['timestamp'],
-                    "user_name": row['name'], "user_picture": row['picture'], "user_id": row['user_id']
+                    "user_name": row['name'], "user_picture": row['picture']
                 })
             else:
                 comments.append({
                     "id": row[0], "text": row[3], "timestamp": row[4],
-                    "user_name": row[7], "user_picture": row[8], "user_id": row[1]
+                    "user_name": row[7], "user_picture": row[8]
                 })
         
         return jsonify(comments)
@@ -1382,6 +1078,12 @@ def get_comments(verse_id):
 def post_comment():
     if 'user_id' not in session:
         return jsonify({"error": "Not logged in"}), 401
+    
+    # BAN CHECK EXPLICITLY HERE TOO
+    is_banned, reason, expires = check_ban_status(session['user_id'])
+    if is_banned:
+        return jsonify({"error": "You are banned", "banned": True}), 403
+    
     try:
         data = request.get_json()
         verse_id = data.get('verse_id')
@@ -1398,49 +1100,18 @@ def post_comment():
             c.execute("""
                 INSERT INTO comments (user_id, verse_id, text, timestamp, google_name, google_picture) 
                 VALUES (%s, %s, %s, %s, %s, %s)
-                RETURNING id
             """, (session['user_id'], verse_id, text, datetime.now().isoformat(), 
                    session.get('user_name'), session.get('user_picture')))
-            comment_id = c.fetchone()[0]
         else:
             c.execute("""
                 INSERT INTO comments (user_id, verse_id, text, timestamp, google_name, google_picture) 
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (session['user_id'], verse_id, text, datetime.now().isoformat(), 
                    session.get('user_name'), session.get('user_picture')))
-            comment_id = c.lastrowid
         
         conn.commit()
-        
-        # Fetch the comment back
-        if is_postgres:
-            c.execute("""
-                SELECT c.*, u.name, u.picture 
-                FROM comments c 
-                JOIN users u ON c.user_id = u.id 
-                WHERE c.id = %s
-            """, (comment_id,))
-        else:
-            c.execute("""
-                SELECT c.*, u.name, u.picture 
-                FROM comments c 
-                JOIN users u ON c.user_id = u.id 
-                WHERE c.id = ?
-            """, (comment_id,))
-        
-        row = c.fetchone()
         conn.close()
-        
-        if isinstance(row, dict):
-            return jsonify({
-                "id": row['id'], "text": row['text'], "timestamp": row['timestamp'],
-                "user_name": row['name'], "user_picture": row['picture'], "user_id": row['user_id']
-            })
-        else:
-            return jsonify({
-                "id": row[0], "text": row[3], "timestamp": row[4],
-                "user_name": row[7], "user_picture": row[8], "user_id": row[1]
-            })
+        return jsonify({"success": True})
     except Exception as e:
         logger.error(f"Post comment error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -1465,7 +1136,6 @@ def delete_comment(comment_id):
         
         conn.commit()
         conn.close()
-        
         return jsonify({"success": True})
     except Exception as e:
         logger.error(f"Delete comment error: {e}")
@@ -1493,12 +1163,12 @@ def get_community_messages():
             if isinstance(row, dict):
                 messages.append({
                     "id": row['id'], "text": row['text'], "timestamp": row['timestamp'],
-                    "user_name": row['name'], "user_picture": row['picture'], "user_id": row['user_id']
+                    "user_name": row['name'], "user_picture": row['picture']
                 })
             else:
                 messages.append({
                     "id": row[0], "text": row[2], "timestamp": row[3],
-                    "user_name": row[6], "user_picture": row[7], "user_id": row[1]
+                    "user_name": row[6], "user_picture": row[7]
                 })
         
         return jsonify(messages)
@@ -1510,6 +1180,12 @@ def get_community_messages():
 def post_community_message():
     if 'user_id' not in session:
         return jsonify({"error": "Not logged in"}), 401
+    
+    # CRITICAL: BAN CHECK FOR MESSAGING
+    is_banned, reason, expires = check_ban_status(session['user_id'])
+    if is_banned:
+        return jsonify({"error": "You are banned", "banned": True}), 403
+    
     try:
         data = request.get_json()
         text = data.get('text', '').strip()
@@ -1525,49 +1201,18 @@ def post_community_message():
             c.execute("""
                 INSERT INTO community_messages (user_id, text, timestamp, google_name, google_picture) 
                 VALUES (%s, %s, %s, %s, %s)
-                RETURNING id
             """, (session['user_id'], text, datetime.now().isoformat(), 
                    session.get('user_name'), session.get('user_picture')))
-            message_id = c.fetchone()[0]
         else:
             c.execute("""
                 INSERT INTO community_messages (user_id, text, timestamp, google_name, google_picture) 
                 VALUES (?, ?, ?, ?, ?)
             """, (session['user_id'], text, datetime.now().isoformat(), 
                    session.get('user_name'), session.get('user_picture')))
-            message_id = c.lastrowid
         
         conn.commit()
-        
-        # Fetch back
-        if is_postgres:
-            c.execute("""
-                SELECT m.*, u.name, u.picture 
-                FROM community_messages m 
-                JOIN users u ON m.user_id = u.id 
-                WHERE m.id = %s
-            """, (message_id,))
-        else:
-            c.execute("""
-                SELECT m.*, u.name, u.picture 
-                FROM community_messages m 
-                JOIN users u ON m.user_id = u.id 
-                WHERE m.id = ?
-            """, (message_id,))
-        
-        row = c.fetchone()
         conn.close()
-        
-        if isinstance(row, dict):
-            return jsonify({
-                "id": row['id'], "text": row['text'], "timestamp": row['timestamp'],
-                "user_name": row['name'], "user_picture": row['picture'], "user_id": row['user_id']
-            })
-        else:
-            return jsonify({
-                "id": row[0], "text": row[2], "timestamp": row[3],
-                "user_name": row[6], "user_picture": row[7], "user_id": row[1]
-            })
+        return jsonify({"success": True})
     except Exception as e:
         logger.error(f"Community post error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -1592,7 +1237,6 @@ def delete_community_message(message_id):
         
         conn.commit()
         conn.close()
-        
         return jsonify({"success": True})
     except Exception as e:
         logger.error(f"Delete community error: {e}")
@@ -1642,8 +1286,6 @@ def check_save(verse_id):
         logger.error(f"Check save error: {e}")
         return jsonify({"saved": False})
 
-# Production entry point - Render uses this
 if __name__ == '__main__':
-    # Local development only - Render uses gunicorn
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
