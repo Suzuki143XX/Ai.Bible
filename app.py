@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, request, redirect, url_for, session, send_from_directory
+from flask import Flask, render_template, jsonify, request, redirect, url_for, session, send_from_directory, abort
 import sqlite3
 import time
 import threading
@@ -10,6 +10,7 @@ import json
 import random
 import logging
 from datetime import datetime, timedelta
+from functools import wraps
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +48,7 @@ db_path = os.path.join(os.path.dirname(__file__), "bible_ios.db")
 def get_db():
     if DATABASE_URL and ('postgresql' in DATABASE_URL):
         import psycopg2
+        import psycopg2.extras
         # Enable SSL for Render PostgreSQL
         conn = psycopg2.connect(DATABASE_URL, sslmode='require')
         return conn
@@ -98,12 +100,14 @@ def init_db():
         is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
         
         if is_postgres:
+            # Create tables with ban support
             c.execute('''CREATE TABLE IF NOT EXISTS verses 
                          (id SERIAL PRIMARY KEY, reference TEXT, text TEXT, 
                           translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
             c.execute('''CREATE TABLE IF NOT EXISTS users 
                          (id SERIAL PRIMARY KEY, google_id TEXT UNIQUE, email TEXT, 
-                          name TEXT, picture TEXT, created_at TEXT, is_admin INTEGER DEFAULT 0)''')
+                          name TEXT, picture TEXT, created_at TEXT, is_admin INTEGER DEFAULT 0,
+                          is_banned BOOLEAN DEFAULT FALSE, ban_expires_at TIMESTAMP, ban_reason TEXT)''')
             c.execute('''CREATE TABLE IF NOT EXISTS likes 
                          (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER, 
                           timestamp TEXT, UNIQUE(user_id, verse_id))''')
@@ -125,13 +129,23 @@ def init_db():
             c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
                          (id SERIAL PRIMARY KEY, user_id INTEGER, text TEXT, 
                           timestamp TEXT, google_name TEXT, google_picture TEXT)''')
+            
+            # Check if ban columns exist (for existing databases)
+            try:
+                c.execute("SELECT is_banned FROM users LIMIT 1")
+            except:
+                c.execute("ALTER TABLE users ADD COLUMN is_banned BOOLEAN DEFAULT FALSE")
+                c.execute("ALTER TABLE users ADD COLUMN ban_expires_at TIMESTAMP")
+                c.execute("ALTER TABLE users ADD COLUMN ban_reason TEXT")
+                logger.info("Added ban columns to users table")
         else:
             c.execute('''CREATE TABLE IF NOT EXISTS verses 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, reference TEXT, text TEXT, 
                           translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
             c.execute('''CREATE TABLE IF NOT EXISTS users 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, google_id TEXT UNIQUE, email TEXT, 
-                          name TEXT, picture TEXT, created_at TEXT, is_admin INTEGER DEFAULT 0)''')
+                          name TEXT, picture TEXT, created_at TEXT, is_admin INTEGER DEFAULT 0,
+                          is_banned INTEGER DEFAULT 0, ban_expires_at TEXT, ban_reason TEXT)''')
             c.execute('''CREATE TABLE IF NOT EXISTS likes 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER, 
                           timestamp TEXT, UNIQUE(user_id, verse_id))''')
@@ -153,6 +167,16 @@ def init_db():
             c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, text TEXT, 
                           timestamp TEXT, google_name TEXT, google_picture TEXT)''')
+            
+            # Check for ban columns in SQLite
+            try:
+                c.execute("SELECT is_banned FROM users LIMIT 1")
+            except sqlite3.OperationalError:
+                c.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0")
+                c.execute("ALTER TABLE users ADD COLUMN ban_expires_at TEXT")
+                c.execute("ALTER TABLE users ADD COLUMN ban_reason TEXT")
+                logger.info("Added ban columns to users table")
+            
             try:
                 c.execute("SELECT is_admin FROM users LIMIT 1")
             except sqlite3.OperationalError:
@@ -160,13 +184,87 @@ def init_db():
         
         conn.commit()
         conn.close()
-        logger.info("Database initialized successfully")
+        logger.info("Database initialized successfully with ban support")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
         raise
 
 # Initialize DB on startup
 init_db()
+
+def check_ban_status(user_id):
+    """Check if user is banned. Returns (is_banned, reason, expires) or (False, None, None)"""
+    try:
+        conn = get_db()
+        c = get_cursor(conn)
+        is_postgres = DATABASE_URL and ('postgresql' in DATABASE_URL)
+        
+        if is_postgres:
+            c.execute("SELECT is_banned, ban_expires_at, ban_reason FROM users WHERE id = %s", (user_id,))
+        else:
+            c.execute("SELECT is_banned, ban_expires_at, ban_reason FROM users WHERE id = ?", (user_id,))
+        
+        row = c.fetchone()
+        conn.close()
+        
+        if not row:
+            return False, None, None
+        
+        if isinstance(row, dict):
+            is_banned = row['is_banned']
+            expires = row['ban_expires_at']
+            reason = row['ban_reason']
+        else:
+            is_banned = row[0]
+            expires = row[1]
+            reason = row[2]
+        
+        # Check if ban expired
+        if is_banned and expires:
+            if isinstance(expires, str):
+                expires_dt = datetime.fromisoformat(expires)
+            else:
+                expires_dt = expires
+            
+            if datetime.now() > expires_dt:
+                # Auto-unban
+                conn = get_db()
+                c = get_cursor(conn)
+                if is_postgres:
+                    c.execute("UPDATE users SET is_banned = FALSE, ban_expires_at = NULL, ban_reason = NULL WHERE id = %s", (user_id,))
+                else:
+                    c.execute("UPDATE users SET is_banned = 0, ban_expires_at = NULL, ban_reason = NULL WHERE id = ?", (user_id,))
+                conn.commit()
+                conn.close()
+                return False, None, None
+        
+        return bool(is_banned), reason, expires
+        
+    except Exception as e:
+        logger.error(f"Ban check error: {e}")
+        return False, None, None
+
+@app.before_request
+def check_user_banned():
+    """Check ban status before every request for logged in users"""
+    if 'user_id' in session and request.endpoint not in ['static', 'logout', 'login', 'callback', 'google_login']:
+        is_banned, reason, expires = check_ban_status(session['user_id'])
+        
+        if is_banned:
+            # Clear session
+            session.clear()
+            
+            # Format message
+            if expires:
+                if isinstance(expires, str):
+                    expires_str = expires
+                else:
+                    expires_str = expires.strftime('%Y-%m-%d %H:%M')
+                flash(f'🚫 Your account has been banned until {expires_str}. Reason: {reason or "Violation of terms"}', 'error')
+            else:
+                flash(f'🚫 Your account has been permanently banned. Reason: {reason or "Violation of terms"}', 'error')
+            
+            return redirect(url_for('login'))
 
 class BibleGenerator:
     def __init__(self):
@@ -194,7 +292,6 @@ class BibleGenerator:
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': 'Mozilla/5.0'})
         
-        # Try to fetch initial verse, but don't crash if it fails
         try:
             self.fetch_verse()
         except Exception as e:
@@ -460,6 +557,20 @@ def index():
     if 'user_id' not in session:
         return redirect(url_for('login'))
     
+    # Check ban status
+    is_banned, reason, expires = check_ban_status(session['user_id'])
+    if is_banned:
+        session.clear()
+        if expires:
+            if isinstance(expires, str):
+                expires_str = expires
+            else:
+                expires_str = expires.strftime('%Y-%m-%d %H:%M')
+            flash(f'🚫 Your account has been banned until {expires_str}. Reason: {reason or "Violation of terms"}', 'error')
+        else:
+            flash(f'🚫 Your account has been permanently banned. Reason: {reason or "Violation of terms"}', 'error')
+        return redirect(url_for('login'))
+    
     try:
         conn = get_db()
         c = get_cursor(conn)
@@ -645,13 +756,76 @@ def callback():
             user_name = user['name']
             user_picture = user['picture']
             is_admin = bool(user.get('is_admin', 0))
+            is_banned = bool(user.get('is_banned', False))
+            ban_expires = user.get('ban_expires_at')
+            ban_reason = user.get('ban_reason')
         else:
             user_id = user[0]
             user_name = user[3]
             user_picture = user[4]
             is_admin = bool(user[6]) if len(user) > 6 else False
+            is_banned = bool(user[7]) if len(user) > 7 else False
+            ban_expires = user[8] if len(user) > 8 else None
+            ban_reason = user[9] if len(user) > 9 else None
         
         conn.close()
+        
+        # Check if banned BEFORE creating session
+        if is_banned:
+            # Check if expired
+            if ban_expires:
+                if isinstance(ban_expires, str):
+                    expires_dt = datetime.fromisoformat(ban_expires)
+                else:
+                    expires_dt = ban_expires
+                
+                if datetime.now() < expires_dt:
+                    # Still banned
+                    if isinstance(ban_expires, str):
+                        expires_str = ban_expires
+                    else:
+                        expires_str = ban_expires.strftime('%Y-%m-%d %H:%M')
+                    return f"""
+                    <html>
+                    <head><title>Account Banned</title></head>
+                    <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1a1a1a; color: white;">
+                        <h1>🚫 Account Banned</h1>
+                        <p>Your account has been temporarily banned.</p>
+                        <p><strong>Reason:</strong> {ban_reason or 'Violation of terms'}</p>
+                        <p><strong>Expires:</strong> {expires_str}</p>
+                        <br>
+                        <a href="/" style="color: #4ECDC4;">Back to Home</a>
+                    </body>
+                    </html>
+                    """, 403
+                # Else: expired, allow login (will be auto-unbanned)
+            else:
+                # Permanent ban
+                return f"""
+                <html>
+                <head><title>Account Banned</title></head>
+                <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1a1a1a; color: white;">
+                    <h1>🚫 Account Banned</h1>
+                    <p>Your account has been permanently banned.</p>
+                    <p><strong>Reason:</strong> {ban_reason or 'Violation of terms'}</p>
+                    <br>
+                    <a href="/" style="color: #4ECDC4;">Back to Home</a>
+                </body>
+                </html>
+                """, 403
+        
+        # If we get here, not banned (or ban expired)
+        if is_banned and ban_expires and datetime.now() > expires_dt:
+            # Auto-unban expired ban
+            conn = get_db()
+            c = get_cursor(conn)
+            if is_postgres:
+                c.execute("UPDATE users SET is_banned = FALSE, ban_expires_at = NULL, ban_reason = NULL WHERE id = %s", (user_id,))
+            else:
+                c.execute("UPDATE users SET is_banned = 0, ban_expires_at = NULL, ban_reason = NULL WHERE id = ?", (user_id,))
+            conn.commit()
+            conn.close()
+        
         session['user_id'] = user_id
         session['user_name'] = user_name
         session['user_picture'] = user_picture
