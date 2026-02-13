@@ -22,7 +22,8 @@ def make_session_permanent():
 
 # Production: Environment-based config
 PUBLIC_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://localhost:5000")
-GOOGLE_CLIENT_ID = "420462376171-hpsgp580an2douisas893bqiki92ccsv.apps.googleusercontent.com"
+GOOGLE_CLIENT_ID = "420462376171-neu8kbc7cm1geu2ov70gd10fh9e2210i.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "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"
 GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
 ADMIN_CODE = os.environ.get("ADMIN_CODE", "God Is All")
 
@@ -795,6 +796,7 @@ if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
 
     app.run(host='0.0.0.0', port=port, debug=False)
+
 
 
 
