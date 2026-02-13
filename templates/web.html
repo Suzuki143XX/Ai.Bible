@@ -1,0 +1,2714 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="/manifest.json">
+    <title>Bible AI</title>
+    <style>
+        :root {
+            --glass-bg: rgba(20, 20, 25, 0.75);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --glass-highlight: rgba(255, 255, 255, 0.15);
+            --primary: #0A84FF;
+            --primary-glow: rgba(10, 132, 255, 0.4);
+            --secondary: #BF5AF2;
+            --success: #30D158;
+            --warning: #FF9F0A;
+            --danger: #FF375F;
+            --bg: #0a0a0f;
+            --surface: rgba(30, 30, 35, 0.8);
+            --text: #FFFFFF;
+            --text-secondary: rgba(255, 255, 255, 0.7);
+            --text-tertiary: rgba(255, 255, 255, 0.4);
+            --safe-top: env(safe-area-inset-top, 0px);
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
+            --font-size: 16px;
+            --animation-speed: 1;
+        }
+
+        [data-theme="light"] {
+            --glass-bg: rgba(255, 255, 255, 0.85);
+            --glass-border: rgba(0, 0, 0, 0.1);
+            --glass-highlight: rgba(255, 255, 255, 0.9);
+            --bg: #f5f5f7;
+            --surface: rgba(255, 255, 255, 0.9);
+            --text: #1a1a1a;
+            --text-secondary: rgba(0, 0, 0, 0.6);
+            --text-tertiary: rgba(0, 0, 0, 0.4);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+
+        html, body {
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--text);
+            font-size: var(--font-size);
+            overflow-x: hidden;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Animated Background */
+        .ambient-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            overflow: hidden;
+        }
+
+        .ambient-orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.3;
+            animation: float 20s infinite ease-in-out;
+        }
+
+        .orb-1 { width: 600px; height: 600px; background: var(--primary); top: -300px; right: -200px; }
+        .orb-2 { width: 500px; height: 500px; background: var(--secondary); bottom: -200px; left: -100px; animation-delay: -7s; }
+        .orb-3 { width: 400px; height: 400px; background: var(--success); top: 40%; left: 60%; animation-delay: -14s; }
+
+        @keyframes float {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(30px, -30px) scale(1.05); }
+            66% { transform: translate(-20px, 20px) scale(0.95); }
+        }
+
+        /* App Container */
+        .app {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            max-width: 100%;
+        }
+
+        @media (min-width: 1024px) {
+            .app {
+                flex-direction: row;
+                max-width: 1600px;
+                margin: 0 auto;
+                width: 100%;
+                padding: 20px;
+                gap: 20px;
+            }
+        }
+
+        /* Header / Sidebar */
+        .header {
+            padding: calc(var(--safe-top) + 16px) 20px 16px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px) saturate(180%);
+            border-bottom: 1px solid var(--glass-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+            position: relative;
+        }
+
+        @media (min-width: 1024px) {
+            .header {
+                width: 260px;
+                flex-direction: column;
+                align-items: stretch;
+                border-bottom: none;
+                border-right: 1px solid var(--glass-border);
+                border-radius: 20px;
+                height: calc(100vh - 40px);
+                position: sticky;
+                top: 20px;
+                padding: 24px;
+            }
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .brand:active {
+            transform: scale(0.95);
+        }
+
+        @media (min-width: 1024px) {
+            .brand {
+                margin-bottom: 32px;
+                justify-content: center;
+                flex-direction: column;
+                text-align: center;
+                padding-top: 16px;
+            }
+        }
+
+        .brand-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            box-shadow: 0 4px 20px var(--primary-glow);
+            flex-shrink: 0;
+            position: relative;
+        }
+
+        .admin-badge {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background: var(--danger);
+            color: white;
+            font-size: 8px;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-weight: bold;
+            display: none;
+        }
+
+        .admin-badge.show {
+            display: block;
+        }
+
+        @media (min-width: 1024px) {
+            .brand-icon {
+                width: 60px;
+                height: 60px;
+                font-size: 32px;
+                border-radius: 18px;
+            }
+        }
+
+        .brand-text {
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        @media (min-width: 1024px) {
+            .brand-text {
+                font-size: 24px;
+            }
+        }
+
+        .desktop-nav {
+            display: none;
+        }
+
+        @media (min-width: 1024px) {
+            .desktop-nav {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                flex: 1;
+                overflow-y: auto;
+            }
+            
+            .nav-item {
+                padding: 14px 16px;
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 14px;
+                color: var(--text-secondary);
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                font-size: 15px;
+                font-weight: 600;
+                transition: all 0.25s;
+                text-align: left;
+            }
+            
+            .nav-item:hover {
+                background: var(--surface);
+                color: var(--text);
+            }
+            
+            .nav-item.active {
+                background: var(--primary);
+                color: white;
+                box-shadow: 0 4px 15px var(--primary-glow);
+            }
+            
+            .nav-icon {
+                font-size: 20px;
+            }
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        @media (min-width: 1024px) {
+            .header-actions {
+                margin-top: auto;
+                justify-content: center;
+                padding-top: 16px;
+                border-top: 1px solid var(--glass-border);
+            }
+        }
+
+        .icon-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: var(--surface);
+            border: 1px solid var(--glass-border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.25s;
+            font-size: 18px;
+            color: var(--text);
+            flex-shrink: 0;
+        }
+
+        .icon-btn:hover {
+            transform: scale(1.08);
+            background: var(--primary);
+        }
+
+        /* Content Area */
+        .content {
+            flex: 1;
+            padding: 16px;
+            padding-bottom: calc(90px + var(--safe-bottom));
+            overflow-y: auto;
+        }
+
+        @media (min-width: 1024px) {
+            .content {
+                padding: 0;
+                padding-bottom: 20px;
+                display: grid;
+                grid-template-columns: 1fr 380px;
+                grid-template-rows: auto 1fr;
+                gap: 20px;
+                align-content: start;
+                height: calc(100vh - 40px);
+                overflow: hidden;
+            }
+        }
+
+        @media (min-width: 1400px) {
+            .content {
+                grid-template-columns: 1fr 420px;
+            }
+        }
+
+        /* Tab Views */
+        .tab-view {
+            display: none;
+            animation: fadeIn calc(0.25s * var(--animation-speed)) ease-out;
+            max-width: 100%;
+        }
+
+        .tab-view.active {
+            display: block;
+        }
+
+        @media (min-width: 1024px) {
+            .tab-view {
+                display: none !important;
+            }
+            
+            .tab-view.desktop-active {
+                display: block !important;
+                overflow-y: auto;
+                max-height: 100%;
+                padding-right: 8px;
+            }
+            
+            #discover {
+                grid-column: 1;
+                grid-row: 1 / span 2;
+            }
+            
+            #recommendations, #library, #comments {
+                grid-column: 2;
+                grid-row: span 1;
+            }
+
+            #profile {
+                grid-column: 1 / span 2;
+            }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Glass Cards */
+        .glass-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px) saturate(150%);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 24px;
+            margin-bottom: 16px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+            transition: transform 0.25s, box-shadow 0.25s;
+        }
+
+        .glass-card:hover {
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+
+        @media (min-width: 1024px) {
+            .glass-card {
+                margin-bottom: 0;
+            }
+        }
+
+        /* Verse Display */
+        .verse-container {
+            cursor: pointer;
+            transition: transform 0.25s;
+        }
+
+        .verse-container:hover {
+            transform: scale(1.01);
+        }
+
+        .verse-text {
+            font-size: 22px;
+            line-height: 1.6;
+            font-weight: 400;
+            letter-spacing: -0.01em;
+            margin-bottom: 20px;
+            word-wrap: break-word;
+        }
+
+        @media (min-width: 768px) {
+            .verse-text {
+                font-size: 26px;
+            }
+        }
+
+        @media (min-width: 1024px) {
+            .verse-text {
+                font-size: 28px;
+                line-height: 1.5;
+            }
+        }
+
+        .verse-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .verse-ref {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .verse-source-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .verse-badge {
+            background: linear-gradient(135deg, var(--warning), #FF6B35);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 16px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .signed-by {
+            font-size: 10px;
+            opacity: 0.7;
+            font-style: italic;
+        }
+
+        /* Action Grid */
+        .action-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        @media (min-width: 768px) {
+            .action-grid {
+                gap: 12px;
+            }
+        }
+
+        .action-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            padding: 14px 8px;
+            background: var(--surface);
+            border: 1px solid var(--glass-border);
+            border-radius: 14px;
+            cursor: pointer;
+            transition: all 0.25s;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .action-btn:hover {
+            background: var(--primary);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px var(--primary-glow);
+        }
+
+        .action-btn:active {
+            transform: scale(0.96);
+        }
+
+        .action-icon {
+            font-size: 22px;
+        }
+
+        /* Timer */
+        .timer-wrapper {
+            margin-top: 20px;
+        }
+
+        .timer-bar {
+            height: 4px;
+            background: var(--surface);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .timer-progress {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            border-radius: 2px;
+            transition: width 1s linear;
+            box-shadow: 0 0 12px var(--primary-glow);
+        }
+
+        .timer-text {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 10px;
+            font-size: 12px;
+            color: var(--text-tertiary);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Recommendations */
+        .gen-btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border: none;
+            border-radius: 16px;
+            color: white;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            margin-bottom: 16px;
+            box-shadow: 0 8px 24px var(--primary-glow);
+            transition: all 0.25s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .gen-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 32px var(--primary-glow);
+        }
+
+        .rec-card {
+            background: linear-gradient(135deg, rgba(10, 132, 255, 0.08), rgba(191, 90, 242, 0.08));
+            border: 1px solid rgba(10, 132, 255, 0.25);
+            border-radius: 16px;
+            padding: 18px;
+            margin-bottom: 12px;
+            animation: slideIn 0.35s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(-15px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        /* Library Tab - Simplified */
+        .favorites-collection {
+            background: linear-gradient(135deg, rgba(255, 59, 95, 0.1), rgba(255, 159, 10, 0.1));
+            border: 2px dashed var(--danger);
+            border-radius: 20px;
+            padding: 30px;
+            text-align: center;
+            min-height: 200px;
+            transition: all 0.3s;
+            margin-bottom: 20px;
+        }
+
+        .favorites-collection.drag-over {
+            background: linear-gradient(135deg, rgba(255, 59, 95, 0.2), rgba(255, 159, 10, 0.2));
+            transform: scale(1.02);
+            border-color: var(--success);
+        }
+
+        .favorites-header {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        .favorites-text {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .favorites-count {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--danger);
+            margin-top: 10px;
+        }
+
+        /* Verse List */
+        .verse-list {
+            max-height: 400px;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .verse-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 14px;
+            margin-bottom: 10px;
+            cursor: grab;
+            transition: all 0.2s;
+            position: relative;
+            user-select: none;
+            touch-action: manipulation;
+        }
+
+        .verse-card:hover {
+            transform: translateX(4px);
+            border-color: var(--primary);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .verse-card.dragging {
+            opacity: 0.6;
+            cursor: grabbing;
+            transform: scale(1.02);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+            z-index: 100;
+        }
+
+        .verse-card-text {
+            font-size: 14px;
+            line-height: 1.5;
+            margin-bottom: 8px;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .verse-card-ref {
+            font-size: 12px;
+            color: var(--primary);
+            font-weight: 700;
+            pointer-events: none;
+        }
+
+        .verse-card-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid var(--glass-border);
+        }
+
+        .verse-card-btn {
+            flex: 1;
+            padding: 8px;
+            background: transparent;
+            border: 1px solid var(--glass-border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+        }
+
+        .verse-card-btn:hover {
+            background: var(--primary);
+            border-color: var(--primary);
+        }
+
+        .verse-card-btn.liked {
+            background: var(--danger);
+            border-color: var(--danger);
+        }
+
+        .verse-card-btn.saved {
+            background: var(--warning);
+            border-color: var(--warning);
+        }
+
+        /* Comments Tab */
+        .comments-container {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .comment-section {
+            background: var(--surface);
+            border-radius: 16px;
+            padding: 16px;
+            border: 1px solid var(--glass-border);
+        }
+
+        .comment-section-header {
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        .comment-input-area {
+            background: var(--glass-bg);
+            border-radius: 20px;
+            padding: 12px 16px;
+            margin-bottom: 12px;
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+            border: 1px solid var(--glass-border);
+        }
+
+        .comment-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-size: 15px;
+            resize: none;
+            outline: none;
+            min-height: 22px;
+            max-height: 120px;
+            font-family: inherit;
+            line-height: 1.5;
+        }
+
+        .comment-input::placeholder {
+            color: var(--text-tertiary);
+        }
+
+        .send-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: var(--primary);
+            border: none;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.25s;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .send-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px var(--primary-glow);
+        }
+
+        .comments-list {
+            max-height: 250px;
+            overflow-y: auto;
+        }
+
+        .comment-item {
+            background: var(--glass-bg);
+            border-radius: 14px;
+            padding: 14px;
+            margin-bottom: 10px;
+            border: 1px solid var(--glass-border);
+            animation: fadeIn 0.3s ease-out;
+            position: relative;
+        }
+
+        .comment-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+        .comment-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid var(--glass-border);
+        }
+
+        .comment-meta {
+            flex: 1;
+        }
+
+        .comment-name {
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .comment-time {
+            font-size: 11px;
+            color: var(--text-tertiary);
+        }
+
+        .comment-text {
+            font-size: 14px;
+            line-height: 1.5;
+            margin-left: 42px;
+            word-wrap: break-word;
+        }
+
+        .delete-comment-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: var(--danger);
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-size: 12px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .delete-comment-btn.show {
+            display: flex;
+        }
+
+        .delete-comment-btn:hover {
+            transform: scale(1.1);
+        }
+
+        /* Community Chat Special Styling */
+        .community-section {
+            background: linear-gradient(135deg, rgba(10, 132, 255, 0.05), rgba(191, 90, 242, 0.05));
+            border-color: rgba(10, 132, 255, 0.2);
+        }
+
+        .community-badge {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Settings Modal */
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            z-index: 1000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--glass-bg);
+            backdrop-filter: blur(25px);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            width: 100%;
+            max-width: 480px;
+            max-height: 85vh;
+            overflow-y: auto;
+            padding: 24px;
+            animation: zoomIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes zoomIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-title {
+            font-size: 22px;
+            font-weight: 700;
+        }
+
+        .close-btn {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            background: var(--surface);
+            border: 1px solid var(--glass-border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--text);
+            font-size: 16px;
+            transition: all 0.2s;
+        }
+
+        .close-btn:hover {
+            background: var(--danger);
+        }
+
+        .setting-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 0;
+            border-bottom: 1px solid var(--glass-border);
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .setting-item:last-child {
+            border-bottom: none;
+        }
+
+        .setting-label {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .setting-desc {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            margin-top: 2px;
+        }
+
+        .toggle {
+            width: 50px;
+            height: 30px;
+            background: var(--surface);
+            border-radius: 30px;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 1px solid var(--glass-border);
+            flex-shrink: 0;
+        }
+
+        .toggle.active {
+            background: var(--success);
+        }
+
+        .toggle-thumb {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 24px;
+            height: 24px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .toggle.active .toggle-thumb {
+            transform: translateX(20px);
+        }
+
+        .segment-control {
+            display: flex;
+            background: var(--surface);
+            border-radius: 10px;
+            padding: 2px;
+            gap: 2px;
+        }
+
+        .segment-btn {
+            flex: 1;
+            padding: 8px 12px;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .segment-btn.active {
+            background: var(--glass-bg);
+            color: var(--text);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+
+        .setting-select {
+            background: var(--surface);
+            border: 1px solid var(--glass-border);
+            border-radius: 10px;
+            padding: 8px 12px;
+            color: var(--text);
+            font-size: 14px;
+            cursor: pointer;
+            min-width: 120px;
+        }
+
+        .admin-only {
+            display: none;
+        }
+
+        .admin-only.show {
+            display: flex;
+        }
+
+        .admin-panel-btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, var(--danger), #FF6B35);
+            border: none;
+            border-radius: 16px;
+            color: white;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            margin-top: 16px;
+            display:
+        }
+
+        .admin-panel-btn.show {
+            display: block;
+        }
+
+        /* Admin Unlock Modal */
+        .admin-unlock-modal .modal-content {
+            max-width: 400px;
+            text-align: center;
+        }
+
+        .admin-code-input {
+            width: 100%;
+            padding: 16px;
+            background: var(--surface);
+            border: 2px solid var(--glass-border);
+            border-radius: 12px;
+            color: var(--text);
+            font-size: 18px;
+            text-align: center;
+            margin: 20px 0;
+            letter-spacing: 2px;
+        }
+
+        .admin-code-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .unlock-btn {
+            width: 100%;
+            padding: 14px;
+            background: var(--primary);
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.25s;
+        }
+
+        .unlock-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px var(--primary-glow);
+        }
+
+        /* Mobile Tab Bar - Removed Images */
+        .tab-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px) saturate(180%);
+            border-top: 1px solid var(--glass-border);
+            display: flex;
+            justify-content: space-around;
+            padding: 10px 8px calc(10px + var(--safe-bottom));
+            z-index: 100;
+        }
+
+        @media (min-width: 1024px) {
+            .tab-bar {
+                display: none;
+            }
+        }
+
+        .tab-btn {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
+            background: transparent;
+            border: none;
+            color: var(--text-tertiary);
+            cursor: pointer;
+            padding: 6px 2px;
+            transition: all 0.25s;
+        }
+
+        .tab-btn.active {
+            color: var(--primary);
+        }
+
+        .tab-icon {
+            font-size: 20px;
+            transition: transform 0.25s;
+        }
+
+        .tab-btn.active .tab-icon {
+            transform: translateY(-2px);
+        }
+
+        .tab-label {
+            font-size: 9px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+
+        /* Fullscreen Verse */
+        .fullscreen-verse {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            backdrop-filter: blur(20px);
+            z-index: 10000;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 30px;
+            cursor: pointer;
+        }
+
+        .fullscreen-verse.active {
+            display: flex;
+            animation: zoomIn 0.3s ease-out;
+        }
+
+        .fullscreen-text {
+            font-size: clamp(22px, 4vw, 44px);
+            line-height: 1.6;
+            text-align: center;
+            font-weight: 300;
+            max-width: 900px;
+            white-space: pre-wrap;
+            margin-bottom: 40px;
+        }
+
+        .fullscreen-actions {
+            display: flex;
+            gap: 16px;
+            margin-top: 20px;
+        }
+
+        .fullscreen-btn {
+            padding: 14px 28px;
+            background: var(--surface);
+            border: 1px solid var(--glass-border);
+            border-radius: 14px;
+            color: var(--text);
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .fullscreen-btn:hover {
+            background: var(--primary);
+            transform: scale(1.05);
+        }
+
+        .fullscreen-hint {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 13px;
+            opacity: 0.5;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            top: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-100px);
+            background: var(--glass-bg);
+            backdrop-filter: blur(15px);
+            border: 1px solid var(--glass-border);
+            padding: 14px 28px;
+            border-radius: 100px;
+            font-size: 14px;
+            font-weight: 600;
+            z-index: 10001;
+            opacity: 0;
+            transition: all 0.35s;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            text-align: center;
+            max-width: 90%;
+        }
+
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+
+        /* Profile Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        @media (min-width: 640px) {
+            .stats-grid {
+                grid-template-columns: repeat(4, 1fr);
+            }
+        }
+
+        .stat-card {
+            background: var(--surface);
+            border-radius: 16px;
+            padding: 20px 16px;
+            text-align: center;
+            border: 1px solid var(--glass-border);
+            transition: transform 0.25s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-4px);
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            opacity: 0.7;
+        }
+
+        /* Profile Info Cards */
+        .profile-info-grid {
+            display: grid;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        @media (min-width: 640px) {
+            .profile-info-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        .profile-info-card {
+            background: var(--surface);
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px solid var(--glass-border);
+            text-align: center;
+        }
+
+        .profile-info-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            opacity: 0.6;
+            margin-bottom: 8px;
+        }
+
+        .profile-info-value {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-tertiary);
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-state-text {
+            font-size: 15px;
+        }
+
+        /* Loading Animation */
+        .skeleton {
+            background: linear-gradient(90deg, var(--surface) 25%, var(--glass-bg) 50%, var(--surface) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            border-radius: 8px;
+        }
+
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        .comment-input::-webkit-scrollbar {
+         display: none;
+          }
+
+        /* Utility */
+        .text-center { text-align: center; }
+        .mt-2 { margin-top: 8px; }
+        .mt-4 { margin-top: 16px; }
+        .mb-2 { margin-bottom: 8px; }
+        .mb-4 { margin-bottom: 16px; }
+    </style>
+</head>
+<body>
+    <div class="ambient-bg">
+        <div class="ambient-orb orb-1"></div>
+        <div class="ambient-orb orb-2"></div>
+        <div class="ambient-orb orb-3"></div>
+    </div>
+
+    <div class="app">
+        <header class="header">
+            <div class="brand" onclick="handleBrandClick()">
+                <div class="brand-icon">
+                    &#128214;
+                    <span class="admin-badge" id="adminBadge">>Admin<</span>
+                </div>
+                <div class="brand-text">Bible AI</div>
+            </div>
+            
+            <nav class="desktop-nav">
+                <button class="nav-item active" onclick="switchTab('discover')" data-tab="discover">
+                    <span class="nav-icon">&#10024;</span>
+                    <span>Discover</span>
+                </button>
+                <button class="nav-item" onclick="switchTab('recommendations')" data-tab="recommendations">
+                    <span class="nav-icon">&#127919;</span>
+                    <span>For You</span>
+                </button>
+                <button class="nav-item" onclick="switchTab('library')" data-tab="library">
+                    <span class="nav-icon">&#128218;</span>
+                    <span>Library</span>
+                </button>
+                <button class="nav-item" onclick="switchTab('comments')" data-tab="comments">
+                    <span class="nav-icon">&#128172;</span>
+                    <span>Comments</span>
+                </button>
+                <button class="nav-item" onclick="switchTab('profile')" data-tab="profile">
+                    <span class="nav-icon">&#128100;</span>
+                    <span>Profile</span>
+                </button>
+            </nav>
+
+            <div class="header-actions">
+                <button class="icon-btn" onclick="openSettings()" title="Settings">&#9881;</button>
+                <button class="icon-btn" onclick="toggleFullscreen()" title="Fullscreen">&#9974;</button>
+                <button class="icon-btn" onclick="showUser()" title="Profile">
+                    <img src="{{ user.picture }}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;" onerror="this.src='https://ui-avatars.com/api/?name={{ user.name }}&background=0a84ff&color=fff'">
+                </button>
+            </div>
+        </header>
+
+        <main class="content">
+            <!-- DISCOVER TAB -->
+            <div id="discover" class="tab-view active desktop-active">
+                <div class="glass-card verse-container" onclick="toggleFullscreen()">
+                    <div class="verse-text" id="verseText">
+                        <div class="skeleton" style="height: 32px; margin-bottom: 12px; width: 100%;"></div>
+                        <div class="skeleton" style="height: 32px; margin-bottom: 12px; width: 90%;"></div>
+                        <div class="skeleton" style="height: 32px; width: 70%;"></div>
+                    </div>
+                    <div class="verse-meta">
+                        <div class="verse-ref" id="verseRef">Loading...</div>
+                        <div class="verse-source-wrapper">
+                            <span class="signed-by">-Signed By George-</span>
+                            <span class="verse-badge" id="verseSource">...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass-card">
+                    <div class="action-grid">
+                        <button class="action-btn" onclick="toggleLike()">
+                            <span class="action-icon" id="likeIcon">&#9825;</span>
+                            <span>Like</span>
+                        </button>
+                        <button class="action-btn" onclick="toggleSave()">
+                            <span class="action-icon" id="saveIcon">&#128278;</span>
+                            <span>Save</span>
+                        </button>
+                        <button class="action-btn" onclick="copyVerse()">
+                            <span class="action-icon">&#128203;</span>
+                            <span>Copy</span>
+                        </button>
+                        <button class="action-btn" onclick="shareVerse()">
+                            <span class="action-icon">&#128228;</span>
+                            <span>Share</span>
+                        </button>
+                    </div>
+
+                    <div class="timer-wrapper">
+                        <div class="timer-bar">
+                            <div class="timer-progress" id="timerBar" style="width: 100%"></div>
+                        </div>
+                        <div class="timer-text">
+                            <span>Next Verse</span>
+                            <span id="timerText">60s</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RECOMMENDATIONS TAB -->
+            <div id="recommendations" class="tab-view">
+                <div class="glass-card">
+                    <button class="gen-btn" onclick="generateRec()">
+                        <span>&#128276;</span>
+                        <span>Generate Recommendation</span>
+                    </button>
+                    
+                    <div id="recList"></div>
+                </div>
+            </div>
+
+            <!-- LIBRARY TAB - Simplified -->
+            <div id="library" class="tab-view">
+                <!-- Favorites Drop Zone -->
+                <div class="favorites-collection" id="favoritesDropZone"
+                     ondragover="handleDragOver(event)" 
+                     ondrop="handleDrop(event)"
+                     ondragleave="handleDragLeave(event)">
+                    <div class="favorites-header">&#128150; Favorites</div>
+                    <div class="favorites-text">Drag verses here to add to favorites</div>
+                    <div class="favorites-count" id="favoritesCount">0</div>
+                    <div style="font-size: 12px; color: var(--text-tertiary); margin-top: 5px;">verses</div>
+                </div>
+
+                <!-- All Verses List -->
+                <div class="glass-card">
+                    <div class="library-header" style="margin-bottom: 12px;">
+                        <span>&#128218;</span>
+                        <span>My Verses (Drag to Favorites)</span>
+                    </div>
+                    
+                    <div class="verse-list" id="libraryVersesList">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">&#9825;</div>
+                            <div class="empty-state-text">No verses yet. Start liking and saving!</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- COMMENTS TAB -->
+            <div id="comments" class="tab-view">
+                <div class="comments-container">
+                    <!-- Current Verse Comments -->
+                    <div class="comment-section">
+                        <div class="comment-section-header">
+                            <span>&#128172;</span>
+                            <span>Comments on <span id="commentVerseRef" style="color: var(--primary);">Current Verse</span></span>
+                        </div>
+                        
+                        <div class="comment-input-area">
+                            <textarea class="comment-input" id="commentInput" placeholder="Share your thoughts on this verse..." rows="1"></textarea>
+                            <button class="send-btn" onclick="postComment()">&#8593;</button>
+                        </div>
+
+                        <div class="comments-list" id="commentsList"></div>
+                    </div>
+
+                    <!-- Community Chat -->
+                    <div class="comment-section community-section">
+                        <div class="comment-section-header">
+                            <span>&#127757;</span>
+                            <span>Community Chat</span>
+                            <span class="community-badge">Life & Support</span>
+                        </div>
+                        
+                        <div class="comment-input-area">
+                            <textarea class="comment-input" id="communityInput" placeholder="Share about life, ask for help, or offer guidance..." rows="1"></textarea>
+                            <button class="send-btn" onclick="postCommunityMessage()">&#8593;</button>
+                        </div>
+
+                        <div class="comments-list" id="communityList"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PROFILE TAB -->
+            <div id="profile" class="tab-view">
+                <div class="glass-card" style="text-align: center; padding: 32px;">
+                    <img src="{{ user.picture }}" style="width: 90px; height: 90px; border-radius: 50%; margin-bottom: 16px; border: 3px solid var(--primary); box-shadow: 0 8px 24px var(--primary-glow);">
+                    <div style="font-size: 24px; font-weight: 700; margin-bottom: 4px;">{{ user.name }}</div>
+                    <div style="font-size: 14px; opacity: 0.6;">{{ user.email }}</div>
+                    <div id="adminTag" style="display: none; margin-top: 8px; color: var(--danger); font-weight: 700; font-size: 14px;">>Admin<</div>
+                </div>
+
+                <!-- Usage Stats -->
+                <div class="profile-info-grid">
+                    <div class="profile-info-card">
+                        <div class="profile-info-label">Member Since</div>
+                        <div class="profile-info-value" id="memberSince">Loading...</div>
+                    </div>
+                    <div class="profile-info-card">
+                        <div class="profile-info-label">Time on Site</div>
+                        <div class="profile-info-value" id="timeOnSite" style="color: var(--success);">0m 0s</div>
+                    </div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="statVerses" style="color: var(--primary);">0</div>
+                        <div class="stat-label">Verses</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statLiked" style="color: var(--danger);">0</div>
+                        <div class="stat-label">Liked</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statSaved" style="color: var(--warning);">0</div>
+                        <div class="stat-label">Saved</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statComments" style="color: var(--success);">0</div>
+                        <div class="stat-label">Comments</div>
+                    </div>
+                </div>
+
+                <button class="gen-btn" style="background: var(--danger);" onclick="logout()">
+                    Log Out
+                </button>
+            </div>
+        </main>
+
+        <!-- Mobile Tab Bar - No Images -->
+        <nav class="tab-bar">
+            <button class="tab-btn active" onclick="switchTab('discover', this)">
+                <span class="tab-icon">&#10024;</span>
+                <span class="tab-label">Discover</span>
+            </button>
+            <button class="tab-btn" onclick="switchTab('recommendations', this)">
+                <span class="tab-icon">&#127919;</span>
+                <span class="tab-label">For You</span>
+            </button>
+            <button class="tab-btn" onclick="switchTab('library', this)">
+                <span class="tab-icon">&#128218;</span>
+                <span class="tab-label">Library</span>
+            </button>
+            <button class="tab-btn" onclick="switchTab('comments', this)">
+                <span class="tab-icon">&#128172;</span>
+                <span class="tab-label">Chat</span>
+            </button>
+            <button class="tab-btn" onclick="switchTab('profile', this)">
+                <span class="tab-icon">&#128100;</span>
+                <span class="tab-label">Profile</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- Fullscreen Verse -->
+    <div class="fullscreen-verse" id="fullscreen" onclick="closeFullscreenOverlay(event)">
+        <div class="fullscreen-text" id="fullscreenText"></div>
+        <div class="fullscreen-actions">
+            <button class="fullscreen-btn" onclick="event.stopPropagation(); toggleLike(); updateFullscreenButtons();">
+                <span id="fsLikeIcon">&#9825;</span>
+                <span>Like</span>
+            </button>
+            <button class="fullscreen-btn" onclick="event.stopPropagation(); toggleSave(); updateFullscreenButtons();">
+                <span id="fsSaveIcon">&#128278;</span>
+                <span>Save</span>
+            </button>
+            <button class="fullscreen-btn" onclick="event.stopPropagation(); copyVerse();">
+                <span>&#128203;</span>
+                <span>Copy</span>
+            </button>
+        </div>
+        <div class="fullscreen-hint">Click background to close</div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal" id="settingsModal" onclick="closeSettings(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-title">Settings</div>
+                <button class="close-btn" onclick="closeSettings()">&#10005;</button>
+            </div>
+
+            <div class="setting-item">
+                <div>
+                    <div class="setting-label">Dark Mode</div>
+                    <div class="setting-desc">Use dark color scheme</div>
+                </div>
+                <div class="toggle active" id="darkToggle" onclick="toggleTheme()">
+                    <div class="toggle-thumb"></div>
+                </div>
+            </div>
+
+            <div class="setting-item">
+                <div>
+                    <div class="setting-label">Font Size</div>
+                </div>
+                <div class="segment-control">
+                    <button class="segment-btn" onclick="setFontSize('small')">Small</button>
+                    <button class="segment-btn active" onclick="setFontSize('medium')">Med</button>
+                    <button class="segment-btn" onclick="setFontSize('large')">Large</button>
+                </div>
+            </div>
+
+            <div class="setting-item">
+                <div>
+                    <div class="setting-label">Animations</div>
+                    <div class="setting-desc">Enable transition effects</div>
+                </div>
+                <div class="toggle active" id="animToggle" onclick="toggleAnimations()">
+                    <div class="toggle-thumb"></div>
+                </div>
+            </div>
+
+            <div class="setting-item">
+                <div>
+                    <div class="setting-label">Sound Effects</div>
+                    <div class="setting-desc">Play sound on new verses</div>
+                </div>
+                <div class="toggle active" id="soundToggle" onclick="toggleSound()">
+                    <div class="toggle-thumb"></div>
+                </div>
+            </div>
+
+            <div class="setting-item">
+                <div>
+                    <div class="setting-label">Auto-Recommendations</div>
+                    <div class="setting-desc">Generate recommendations automatically</div>
+                </div>
+                <div class="toggle active" id="autoRecToggle" onclick="toggleAutoRec()">
+                    <div class="toggle-thumb"></div>
+                </div>
+            </div>
+
+            <div class="setting-item">
+                <div>
+                    <div class="setting-label">Compact Mode</div>
+                    <div class="setting-desc">Reduce padding for more content</div>
+                </div>
+                <div class="toggle" id="compactToggle" onclick="toggleCompact()">
+                    <div class="toggle-thumb"></div>
+                </div>
+            </div>
+
+            <div class="setting-item">
+                <div>
+                    <div class="setting-label">Notification Bell</div>
+                    <div class="setting-desc">Show toast notifications</div>
+                </div>
+                <div class="toggle active" id="notificationToggle" onclick="toggleNotifications()">
+                    <div class="toggle-thumb"></div>
+                </div>
+            </div>
+
+            <!-- Admin Only Setting -->
+            <div class="setting-item admin-only" id="adminIntervalSetting">
+                <div>
+                    <div class="setting-label" style="color: var(--danger);">Verse Refresh Interval (Admin)</div>
+                    <div class="setting-desc">How often to fetch new verses</div>
+                </div>
+                <select class="setting-select" id="intervalSelect" onchange="changeInterval(this.value)">
+                    <option value="30">30 seconds</option>
+                    <option value="60" selected>1 minute</option>
+                    <option value="120">2 minutes</option>
+                    <option value="300">5 minutes</option>
+                </select>
+            </div>
+
+            <button class="admin-panel-btn" id="adminPanelBtn" onclick="openAdminUnlock()">
+                Unlock Admin Panel
+            </button>
+        </div>
+    </div>
+
+    <!-- Admin Unlock Modal -->
+    <div class="modal admin-unlock-modal" id="adminUnlockModal" onclick="closeAdminUnlock(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-title">Admin Access</div>
+                <button class="close-btn" onclick="closeAdminUnlock()">&#10005;</button>
+            </div>
+            
+            <p style="color: var(--text-secondary); margin-bottom: 10px;">Enter the admin code to unlock privileged features</p>
+            
+            <input type="password" class="admin-code-input" id="adminCodeInput" placeholder="•••••••••" maxlength="20">
+            
+            <button class="unlock-btn" onclick="verifyAdminCode()">Unlock</button>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // State
+        let currentVerse = null;
+        let currentTab = 'discover';
+        let libraryData = { liked: [], saved: [], collections: [] };
+        let settings = {
+            darkMode: true,
+            fontSize: 'medium',
+            animations: true,
+            sound: true,
+            autoRec: true,
+            compact: false,
+            notifications: true,
+            interval: 60
+        };
+        let autoRecInterval = null;
+        let verseCheckInterval = null;
+        let isAdmin = false;
+        let favoritesCollection = null;
+
+        // Permanent Timer State
+        let sessionStartTime = null;
+        let timerInterval = null;
+
+        // Drag and Drop State
+        let dragState = {
+            isDragging: false,
+            draggedVerse: null,
+            dragTimer: null,
+            startX: 0,
+            startY: 0,
+            hasMoved: false
+        };
+
+        // Initialize
+        async function init() {
+            loadSettings();
+            initPermanentTimer();
+            fetchVerse();
+            verseCheckInterval = setInterval(fetchVerse, 1000);
+            checkAdminStatus();
+            
+            // Setup textarea auto-resize
+            setupTextarea('commentInput');
+            setupTextarea('communityInput');
+        }
+
+        function setupTextarea(id) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            
+            el.addEventListener('input', function() {
+                this.style.height = 'auto';
+                this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+            });
+            
+            el.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (id === 'commentInput') postComment();
+                    else if (id === 'communityInput') postCommunityMessage();
+                }
+            });
+        }
+
+        // Permanent Timer Functions
+        function initPermanentTimer() {
+            // Check if we have a stored start time
+            const storedStart = localStorage.getItem('bibleAppStartTime');
+            const storedIsAdmin = localStorage.getItem('bibleAppIsAdmin');
+            
+            if (storedStart) {
+                sessionStartTime = parseInt(storedStart);
+            } else {
+                sessionStartTime = Date.now();
+                localStorage.setItem('bibleAppStartTime', sessionStartTime);
+            }
+            
+            if (storedIsAdmin === 'true') {
+                isAdmin = true;
+                updateAdminUI();
+            }
+            
+            // Update every second
+            updateTimeOnSite();
+            timerInterval = setInterval(updateTimeOnSite, 1000);
+        }
+
+        function updateTimeOnSite() {
+            const now = Date.now();
+            const elapsed = Math.floor((now - sessionStartTime) / 1000); // in seconds
+            
+            const hours = Math.floor(elapsed / 3600);
+            const mins = Math.floor((elapsed % 3600) / 60);
+            const secs = elapsed % 60;
+            
+            let timeText = '';
+            if (hours > 0) {
+                timeText = `${hours}h ${mins}m ${secs}s`;
+            } else if (mins > 0) {
+                timeText = `${mins}m ${secs}s`;
+            } else {
+                timeText = `${secs}s`;
+            }
+            
+            const el = document.getElementById('timeOnSite');
+            if (el) el.textContent = timeText;
+        }
+
+        // Admin Functions
+        async function checkAdminStatus() {
+            try {
+                const res = await fetch('/api/user_info');
+                const data = await res.json();
+                if (data.is_admin || data.session_admin) {
+                    isAdmin = true;
+                    localStorage.setItem('bibleAppIsAdmin', 'true');
+                    updateAdminUI();
+                }
+            } catch (e) {
+                console.error('Admin check failed:', e);
+            }
+        }
+
+        function updateAdminUI() {
+            // Show admin badge on logo
+            document.getElementById('adminBadge').classList.add('show');
+            
+            // Show admin tag in profile
+            const adminTag = document.getElementById('adminTag');
+            if (adminTag) adminTag.style.display = 'block';
+            
+            // Show admin-only settings
+            document.getElementById('adminIntervalSetting').classList.add('show');
+            
+            // Hide unlock button
+            const unlockBtn = document.getElementById('adminPanelBtn');
+            if (unlockBtn) unlockBtn.style.display = 'none';
+            
+            // Show delete buttons on existing comments
+            document.querySelectorAll('.delete-comment-btn').forEach(btn => {
+                btn.classList.add('show');
+            });
+        }
+
+        let brandClickCount = 0;
+        let brandClickTimer = null;
+
+        function handleBrandClick() {
+            brandClickCount++;
+            
+            if (brandClickCount === 1) {
+                brandClickTimer = setTimeout(() => {
+                    brandClickCount = 0;
+                }, 1000);
+            }
+            
+            if (brandClickCount >= 3) {
+                clearTimeout(brandClickTimer);
+                brandClickCount = 0;
+                openAdminUnlock();
+            }
+        }
+
+        function openAdminUnlock() {
+            if (isAdmin) return;
+            document.getElementById('adminUnlockModal').classList.add('active');
+            setTimeout(() => document.getElementById('adminCodeInput').focus(), 100);
+        }
+
+        function closeAdminUnlock(e) {
+            if (!e || e.target.id === 'adminUnlockModal') {
+                document.getElementById('adminUnlockModal').classList.remove('active');
+                document.getElementById('adminCodeInput').value = '';
+            }
+        }
+
+        async function verifyAdminCode() {
+            const code = document.getElementById('adminCodeInput').value.trim();
+            
+            try {
+                const res = await fetch('/api/verify_admin', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({code: code})
+                });
+                
+                const data = await res.json();
+                
+                if (data.success) {
+                    isAdmin = true;
+                    localStorage.setItem('bibleAppIsAdmin', 'true');
+                    updateAdminUI();
+                    closeAdminUnlock();
+                    showToast('Welcome >Admin<!', 3000);
+                } else {
+                    closeAdminUnlock();
+                    switchTab('recommendations');
+                    showToast('Sorry wrong code', 3000);
+                }
+            } catch (e) {
+                showToast('Error verifying code');
+            }
+        }
+
+        // Tab Switching
+        function switchTab(tab, btn = null) {
+            currentTab = tab;
+            
+            document.querySelectorAll('.tab-view').forEach(v => {
+                v.classList.remove('active');
+                v.classList.remove('desktop-active');
+            });
+            document.getElementById(tab).classList.add('active');
+            
+            if (window.innerWidth >= 1024) {
+                document.getElementById(tab).classList.add('desktop-active');
+            }
+            
+            if (btn) {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            }
+            
+            document.querySelectorAll('.nav-item').forEach(n => {
+                n.classList.remove('active');
+                if (n.dataset.tab === tab) n.classList.add('active');
+            });
+            
+            if (tab === 'library') loadLibrary();
+            if (tab === 'comments') {
+                loadComments();
+                loadCommunityMessages();
+            }
+            if (tab === 'profile') loadProfileStats();
+            if (tab === 'recommendations') loadRecommendations();
+        }
+
+        // Verse Handling
+        async function fetchVerse() {
+            try {
+                const res = await fetch('/api/current');
+                const data = await res.json();
+                
+                if (data.verse) {
+                    const isNew = currentVerse && data.verse.id !== currentVerse.id;
+                    currentVerse = data.verse;
+                    
+                    document.getElementById('verseText').textContent = data.verse.text;
+                    document.getElementById('verseRef').textContent = data.verse.ref;
+                    document.getElementById('verseSource').textContent = data.verse.source;
+                    document.getElementById('fullscreenText').textContent = `"${data.verse.text}"\n\n— ${data.verse.ref}`;
+                    document.getElementById('commentVerseRef').textContent = data.verse.ref;
+                    
+                    const pct = (data.countdown / data.interval) * 100;
+                    document.getElementById('timerBar').style.width = pct + '%';
+                    document.getElementById('timerText').textContent = data.countdown + 's';
+                    
+                    if (isNew && settings.notifications) {
+                        showToast('New verse discovered!');
+                        if (currentTab === 'comments') loadComments();
+                    }
+                    
+                    checkStatus(data.verse.id);
+                }
+            } catch (e) {
+                console.error('Fetch error:', e);
+            }
+        }
+
+        async function checkStatus(verseId) {
+            const [likeRes, saveRes] = await Promise.all([
+                fetch(`/api/check_like/${verseId}`),
+                fetch(`/api/check_save/${verseId}`)
+            ]);
+            const likeData = await likeRes.json();
+            const saveData = await saveRes.json();
+            
+            updateLikeUI(likeData.liked);
+            updateSaveUI(saveData.saved);
+        }
+
+        function updateLikeUI(liked) {
+            const icon = document.getElementById('likeIcon');
+            icon.innerHTML = liked ? '&#9829;' : '&#9825;';
+            icon.style.color = liked ? 'var(--danger)' : '';
+        }
+
+        function updateSaveUI(saved) {
+            const icon = document.getElementById('saveIcon');
+            icon.innerHTML = saved ? '&#128209;' : '&#128278;';
+            icon.style.color = saved ? 'var(--warning)' : '';
+        }
+
+        async function toggleLike() {
+            if (!currentVerse) return;
+            const res = await fetch('/api/like', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({verse_id: currentVerse.id})
+            });
+            const data = await res.json();
+            updateLikeUI(data.liked);
+            if (settings.notifications) showToast(data.liked ? 'Added to likes' : 'Removed from likes');
+            
+            if (data.recommendation && settings.autoRec) {
+                showRecommendation(data.recommendation);
+            }
+            if (currentTab === 'library') loadLibrary();
+        }
+
+        async function toggleSave() {
+            if (!currentVerse) return;
+            const res = await fetch('/api/save', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({verse_id: currentVerse.id})
+            });
+            const data = await res.json();
+            updateSaveUI(data.saved);
+            if (settings.notifications) showToast(data.saved ? 'Verse saved' : 'Removed from saved');
+            if (currentTab === 'library') loadLibrary();
+        }
+
+        // Copy & Share
+        async function copyVerse() {
+            if (!currentVerse) return;
+            const text = `"${currentVerse.text}" — ${currentVerse.ref}`;
+            await navigator.clipboard.writeText(text);
+            if (settings.notifications) showToast('Copied to clipboard!');
+        }
+
+        async function shareVerse() {
+            if (!currentVerse) return;
+            const text = `"${currentVerse.text}" — ${currentVerse.ref}`;
+            
+            try {
+                if (navigator.share) {
+                    await navigator.share({ title: 'Bible AI Verse', text: text, url: window.location.href });
+                } else {
+                    await navigator.clipboard.writeText(text);
+                    if (settings.notifications) showToast('Verse copied for sharing!');
+                }
+            } catch (e) {
+                console.log('Share cancelled');
+            }
+        }
+
+        // Fullscreen
+        function toggleFullscreen(verse = null) {
+            const fs = document.getElementById('fullscreen');
+            const v = verse || currentVerse;
+            
+            if (v) {
+                document.getElementById('fullscreenText').textContent = `"${v.text}"\n\n— ${v.ref}`;
+                updateFullscreenButtons(v.id);
+                fs.classList.add('active');
+            }
+        }
+
+        function closeFullscreenOverlay(e) {
+            if (e.target.id === 'fullscreen') {
+                document.getElementById('fullscreen').classList.remove('active');
+            }
+        }
+
+        async function updateFullscreenButtons(verseId = null) {
+            const id = verseId || (currentVerse ? currentVerse.id : null);
+            if (!id) return;
+            
+            const [likeRes, saveRes] = await Promise.all([
+                fetch(`/api/check_like/${id}`),
+                fetch(`/api/check_save/${id}`)
+            ]);
+            const likeData = await likeRes.json();
+            const saveData = await saveRes.json();
+            
+            document.getElementById('fsLikeIcon').innerHTML = likeData.liked ? '&#9829;' : '&#9825;';
+            document.getElementById('fsSaveIcon').innerHTML = saveData.saved ? '&#128209;' : '&#128278;';
+        }
+
+        // Recommendations
+        function setupAutoRecommendations() {
+            if (autoRecInterval) clearInterval(autoRecInterval);
+            autoRecInterval = setInterval(async () => {
+                if (settings.autoRec && currentTab === 'recommendations') {
+                    await generateRec(true);
+                }
+            }, 60000);
+        }
+
+        function toggleAutoRec() {
+            settings.autoRec = !settings.autoRec;
+            document.getElementById('autoRecToggle').classList.toggle('active');
+            saveSettings();
+            if (settings.notifications) showToast(settings.autoRec ? 'Auto-recommendations ON' : 'Auto-recommendations OFF');
+        }
+
+        async function loadRecommendations() {
+            const res = await fetch('/api/recommendations');
+            const data = await res.json();
+            
+            if (data.recommendations.length > 0) {
+                displayRecommendations(data.recommendations);
+            }
+        }
+
+        async function generateRec(silent = false) {
+            const btn = document.querySelector('.gen-btn');
+            btn.style.transform = 'scale(0.97)';
+            setTimeout(() => btn.style.transform = '', 100);
+            
+            const res = await fetch('/api/generate-recommendation', {method: 'POST'});
+            const data = await res.json();
+            
+            if (data.success) {
+                showRecommendation(data.recommendation);
+                if (!silent && settings.notifications) showToast('New recommendation!');
+            }
+        }
+
+        function showRecommendation(rec) {
+            const list = document.getElementById('recList');
+            const card = createRecCard(rec);
+            list.insertBefore(card, list.firstChild);
+            
+            while (list.children.length > 10) {
+                list.removeChild(list.lastChild);
+            }
+        }
+
+        function displayRecommendations(recs) {
+            const list = document.getElementById('recList');
+            list.innerHTML = '';
+            recs.forEach(rec => {
+                list.appendChild(createRecCard(rec));
+            });
+        }
+
+        function createRecCard(rec) {
+            const div = document.createElement('div');
+            div.className = 'rec-card';
+            div.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--primary);">
+                    <span>&#10024;</span>
+                    <span>${rec.reason}</span>
+                </div>
+                <div style="font-size: 15px; line-height: 1.5; margin-bottom: 10px;">${rec.text}</div>
+                <div style="font-size: 13px; opacity: 0.7; font-weight: 600; margin-bottom: 12px;">${rec.ref}</div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="verse-card-btn" style="flex: 1;" onclick="recLike(${rec.id}, this)">&#9825; Like</button>
+                    <button class="verse-card-btn" style="flex: 1;" onclick="recSave(${rec.id}, this)">&#128278; Save</button>
+                </div>
+            `;
+            return div;
+        }
+
+        async function recLike(id, btn) {
+            await fetch('/api/like', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({verse_id: id})
+            });
+            btn.innerHTML = '&#9829; Liked';
+            btn.classList.add('liked');
+        }
+
+        async function recSave(id, btn) {
+            await fetch('/api/save', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({verse_id: id})
+            });
+            btn.innerHTML = '&#128209; Saved';
+            btn.classList.add('saved');
+        }
+
+        // Library - Simplified with Favorites
+        async function loadLibrary() {
+            const res = await fetch('/api/library');
+            libraryData = await res.json();
+            
+            // Find or create favorites collection
+            favoritesCollection = libraryData.collections.find(c => c.name === 'Favorites');
+            
+            // Update favorites drop zone count
+            const favCount = favoritesCollection ? favoritesCollection.verses.length : 0;
+            document.getElementById('favoritesCount').textContent = favCount;
+            
+            // Render combined liked and saved verses
+            renderLibraryVerses();
+        }
+
+        function renderLibraryVerses() {
+            const list = document.getElementById('libraryVersesList');
+            
+            // Combine liked and saved, remove duplicates
+            const allVerses = [...libraryData.liked, ...libraryData.saved];
+            const seen = new Set();
+            const uniqueVerses = allVerses.filter(v => {
+                if (seen.has(v.id)) return false;
+                seen.add(v.id);
+                return true;
+            });
+            
+            if (uniqueVerses.length === 0) {
+                list.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">&#9825;</div>
+                        <div class="empty-state-text">No verses yet. Start liking and saving!</div>
+                    </div>
+                `;
+                return;
+            }
+            
+            list.innerHTML = uniqueVerses.map(v => `
+                <div class="verse-card" 
+                     draggable="true"
+                     data-verse-id="${v.id}"
+                     data-verse='${JSON.stringify(v).replace(/'/g, "&#39;")}'
+                     onmousedown="handleMouseDown(event, this)"
+                     onmouseup="handleMouseUp(event, this)"
+                     onmouseleave="handleMouseLeave(event, this)"
+                     ontouchstart="handleTouchStart(event, this)"
+                     ontouchend="handleTouchEnd(event, this)"
+                     ondragstart="handleDragStart(event, this)">
+                    <div class="verse-card-text">${v.text}</div>
+                    <div class="verse-card-ref">${v.ref}</div>
+                    <div class="verse-card-actions">
+                        <button class="verse-card-btn ${v.liked_at ? 'liked' : ''}" onclick="event.stopPropagation(); libraryLike(${v.id})">
+                            ${v.liked_at ? '&#9829; Liked' : '&#9825; Like'}
+                        </button>
+                        <button class="verse-card-btn ${v.saved_at ? 'saved' : ''}" onclick="event.stopPropagation(); librarySave(${v.id})">
+                            ${v.saved_at ? '&#128209; Saved' : '&#128278; Save'}
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Drag and Drop Handlers
+        function handleMouseDown(e, el) {
+            dragState.startX = e.clientX;
+            dragState.startY = e.clientY;
+            dragState.hasMoved = false;
+            dragState.draggedVerse = JSON.parse(el.dataset.verse);
+            
+            dragState.dragTimer = setTimeout(() => {
+                dragState.isDragging = true;
+                el.classList.add('dragging');
+            }, 300);
+        }
+
+        function handleMouseUp(e, el) {
+            clearTimeout(dragState.dragTimer);
+            
+            const dx = Math.abs(e.clientX - dragState.startX);
+            const dy = Math.abs(e.clientY - dragState.startY);
+            
+            if (!dragState.isDragging && dx < 5 && dy < 5) {
+                const verse = JSON.parse(el.dataset.verse);
+                toggleFullscreen(verse);
+            }
+            
+            setTimeout(() => {
+                dragState.isDragging = false;
+                dragState.draggedVerse = null;
+                el.classList.remove('dragging');
+            }, 50);
+        }
+
+        function handleMouseLeave(e, el) {
+            clearTimeout(dragState.dragTimer);
+            if (!dragState.isDragging) {
+                dragState.draggedVerse = null;
+            }
+        }
+
+        function handleTouchStart(e, el) {
+            const touch = e.touches[0];
+            dragState.startX = touch.clientX;
+            dragState.startY = touch.clientY;
+            dragState.hasMoved = false;
+            dragState.draggedVerse = JSON.parse(el.dataset.verse);
+            
+            dragState.dragTimer = setTimeout(() => {
+                dragState.isDragging = true;
+                el.classList.add('dragging');
+            }, 400);
+        }
+
+        function handleTouchEnd(e, el) {
+            clearTimeout(dragState.dragTimer);
+            
+            const touch = e.changedTouches[0];
+            const dx = Math.abs(touch.clientX - dragState.startX);
+            const dy = Math.abs(touch.clientY - dragState.startY);
+            
+            if (!dragState.isDragging && dx < 10 && dy < 10) {
+                const verse = JSON.parse(el.dataset.verse);
+                toggleFullscreen(verse);
+            }
+            
+            setTimeout(() => {
+                dragState.isDragging = false;
+                dragState.draggedVerse = null;
+                el.classList.remove('dragging');
+            }, 50);
+        }
+
+        function handleDragStart(e, el) {
+            if (!dragState.isDragging && dragState.draggedVerse) {
+                dragState.isDragging = true;
+                dragState.draggedVerse = JSON.parse(el.dataset.verse);
+            }
+            e.dataTransfer.effectAllowed = 'copy';
+            e.dataTransfer.setData('text/plain', el.dataset.verseId);
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            document.getElementById('favoritesDropZone').classList.add('drag-over');
+        }
+
+        function handleDragLeave(e) {
+            document.getElementById('favoritesDropZone').classList.remove('drag-over');
+        }
+
+        async function handleDrop(e) {
+            e.preventDefault();
+            document.getElementById('favoritesDropZone').classList.remove('drag-over');
+            
+            const verseId = dragState.draggedVerse ? dragState.draggedVerse.id : parseInt(e.dataTransfer.getData('text/plain'));
+            if (!verseId) return;
+            
+            // Create favorites collection if doesn't exist, then add verse
+            try {
+                let collectionId = favoritesCollection ? favoritesCollection.id : null;
+                
+                if (!collectionId) {
+                    // Create favorites collection
+                    const createRes = await fetch('/api/collections/create', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({name: 'Favorites', color: '#FF375F'})
+                    });
+                    const createData = await createRes.json();
+                    collectionId = createData.id;
+                    favoritesCollection = createData;
+                }
+                
+                const res = await fetch('/api/collections/add', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({collection_id: collectionId, verse_id: verseId})
+                });
+                
+                const data = await res.json();
+                if (data.success) {
+                    if (settings.notifications) showToast('Added to Favorites!');
+                    loadLibrary();
+                } else {
+                    if (settings.notifications) showToast('Already in Favorites');
+                }
+            } catch (e) {
+                console.error('Drop error:', e);
+            }
+            
+            dragState.isDragging = false;
+            dragState.draggedVerse = null;
+            document.querySelectorAll('.verse-card.dragging').forEach(el => el.classList.remove('dragging'));
+        }
+
+        async function libraryLike(id) {
+            await fetch('/api/like', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({verse_id: id})
+            });
+            loadLibrary();
+            if (currentVerse && currentVerse.id === id) checkStatus(id);
+        }
+
+        async function librarySave(id) {
+            await fetch('/api/save', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({verse_id: id})
+            });
+            loadLibrary();
+            if (currentVerse && currentVerse.id === id) checkStatus(id);
+        }
+
+        // Comments
+        async function loadComments() {
+            if (!currentVerse) return;
+            const res = await fetch(`/api/comments/${currentVerse.id}`);
+            const comments = await res.json();
+            
+            const list = document.getElementById('commentsList');
+            if (comments.length === 0) {
+                list.innerHTML = '<div class="empty-state"><div class="empty-state-text">No comments yet. Share your thoughts!</div></div>';
+            } else {
+                list.innerHTML = comments.map(c => renderCommentItem(c, 'comment')).join('');
+            }
+            
+            // Show delete buttons if admin
+            if (isAdmin) {
+                document.querySelectorAll('.delete-comment-btn').forEach(btn => btn.classList.add('show'));
+            }
+        }
+
+        async function postComment() {
+            const input = document.getElementById('commentInput');
+            const text = input.value.trim();
+            if (!text || !currentVerse) return;
+            
+            const res = await fetch('/api/comments', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({verse_id: currentVerse.id, text: text})
+            });
+            
+            if (res.ok) {
+                input.value = '';
+                input.style.height = 'auto';
+                loadComments();
+                loadProfileStats();
+                if (settings.notifications) showToast('Comment posted!');
+            }
+        }
+
+        // Community Chat
+        async function loadCommunityMessages() {
+            const res = await fetch('/api/community');
+            const messages = await res.json();
+            
+            const list = document.getElementById('communityList');
+            if (messages.length === 0) {
+                list.innerHTML = '<div class="empty-state"><div class="empty-state-text">Start a conversation about life, faith, or support!</div></div>';
+            } else {
+                list.innerHTML = messages.map(m => renderCommentItem(m, 'community')).join('');
+            }
+            
+            if (isAdmin) {
+                document.querySelectorAll('.delete-comment-btn').forEach(btn => btn.classList.add('show'));
+            }
+        }
+
+        async function postCommunityMessage() {
+            const input = document.getElementById('communityInput');
+            const text = input.value.trim();
+            if (!text) return;
+            
+            const res = await fetch('/api/community', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({text: text})
+            });
+            
+            if (res.ok) {
+                input.value = '';
+                input.style.height = 'auto';
+                loadCommunityMessages();
+                if (settings.notifications) showToast('Message posted!');
+            }
+        }
+
+        function renderCommentItem(c, type) {
+            const isOwner = c.user_id === parseInt('{{ user.id }}');
+            return `
+                <div class="comment-item" id="${type}-${c.id}">
+                    <button class="delete-comment-btn" onclick="deleteComment(${c.id}, '${type}')" title="Delete (Admin only)">&#10005;</button>
+                    <div class="comment-header">
+                        <img src="${c.user_picture}" class="comment-avatar" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(c.user_name)}&background=random'">
+                        <div class="comment-meta">
+                            <div class="comment-name">${c.user_name}</div>
+                            <div class="comment-time">${new Date(c.timestamp).toLocaleString()}</div>
+                        </div>
+                    </div>
+                    <div class="comment-text">${escapeHtml(c.text)}</div>
+                </div>
+            `;
+        }
+
+        async function deleteComment(id, type) {
+            if (!isAdmin) return;
+            
+            if (!confirm('Delete this ' + (type === 'comment' ? 'comment' : 'message') + '?')) return;
+            
+            try {
+                const endpoint = type === 'comment' ? `/api/admin/delete_comment/${id}` : `/api/admin/delete_community/${id}`;
+                const res = await fetch(endpoint, {method: 'DELETE'});
+                
+                if (res.ok) {
+                    document.getElementById(`${type}-${id}`).remove();
+                    showToast('Deleted successfully');
+                    loadProfileStats();
+                }
+            } catch (e) {
+                showToast('Failed to delete');
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Profile Stats
+        async function loadProfileStats() {
+            const res = await fetch('/api/stats');
+            const data = await res.json();
+            document.getElementById('statVerses').textContent = data.total_verses;
+            document.getElementById('statLiked').textContent = data.liked;
+            document.getElementById('statSaved').textContent = data.saved;
+            document.getElementById('statComments').textContent = data.comments;
+            
+            const userRes = await fetch('/api/user_info');
+            const userData = await userRes.json();
+            
+            if (userData.created_at) {
+                const date = new Date(userData.created_at);
+                document.getElementById('memberSince').textContent = date.toLocaleDateString();
+            }
+        }
+
+        // Settings
+        function openSettings() {
+            document.getElementById('settingsModal').classList.add('active');
+        }
+
+        function closeSettings(e) {
+            if (!e || e.target.id === 'settingsModal') {
+                document.getElementById('settingsModal').classList.remove('active');
+            }
+        }
+
+        function toggleTheme() {
+            settings.darkMode = !settings.darkMode;
+            document.documentElement.setAttribute('data-theme', settings.darkMode ? 'dark' : 'light');
+            document.getElementById('darkToggle').classList.toggle('active');
+            saveSettings();
+        }
+
+        function setFontSize(size) {
+            settings.fontSize = size;
+            const sizes = {small: '14px', medium: '16px', large: '19px'};
+            document.documentElement.style.setProperty('--font-size', sizes[size]);
+            document.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            saveSettings();
+        }
+
+        function toggleAnimations() {
+            settings.animations = !settings.animations;
+            document.documentElement.style.setProperty('--animation-speed', settings.animations ? '1' : '0');
+            document.getElementById('animToggle').classList.toggle('active');
+            saveSettings();
+        }
+
+        function toggleSound() {
+            settings.sound = !settings.sound;
+            document.getElementById('soundToggle').classList.toggle('active');
+            saveSettings();
+        }
+
+        function toggleCompact() {
+            settings.compact = !settings.compact;
+            document.getElementById('compactToggle').classList.toggle('active');
+            saveSettings();
+        }
+
+        function toggleNotifications() {
+            settings.notifications = !settings.notifications;
+            document.getElementById('notificationToggle').classList.toggle('active');
+            saveSettings();
+        }
+
+        async function changeInterval(val) {
+            if (!isAdmin) {
+                showToast('Admin access required');
+                return;
+            }
+            
+            settings.interval = parseInt(val);
+            saveSettings();
+            
+            const res = await fetch('/api/set_interval', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({interval: settings.interval})
+            });
+            
+            if (res.ok) {
+                if (settings.notifications) showToast(`Interval set to ${val}s`);
+            } else {
+                showToast('Failed to update interval');
+            }
+        }
+
+        function saveSettings() {
+            localStorage.setItem('bibleSettings', JSON.stringify(settings));
+        }
+
+        function loadSettings() {
+            const saved = localStorage.getItem('bibleSettings');
+            if (saved) {
+                settings = {...settings, ...JSON.parse(saved)};
+                
+                if (!settings.darkMode) {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                    document.getElementById('darkToggle').classList.remove('active');
+                }
+                if (settings.fontSize !== 'medium') {
+                    const sizes = {small: '14px', medium: '16px', large: '19px'};
+                    document.documentElement.style.setProperty('--font-size', sizes[settings.fontSize]);
+                }
+                if (!settings.animations) {
+                    document.documentElement.style.setProperty('--animation-speed', '0');
+                    document.getElementById('animToggle').classList.remove('active');
+                }
+                if (!settings.sound) document.getElementById('soundToggle').classList.remove('active');
+                if (!settings.autoRec) document.getElementById('autoRecToggle').classList.remove('active');
+                if (settings.compact) document.getElementById('compactToggle').classList.add('active');
+                if (!settings.notifications) document.getElementById('notificationToggle').classList.remove('active');
+                if (settings.interval) document.getElementById('intervalSelect').value = settings.interval;
+            }
+            setupAutoRecommendations();
+        }
+
+        // Toast
+        function showToast(msg, duration = 2800) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), duration);
+        }
+
+        function logout() {
+            // Clear timer on logout
+            localStorage.removeItem('bibleAppStartTime');
+            localStorage.removeItem('bibleAppIsAdmin');
+            window.location.href = '/logout';
+        }
+
+        function showUser() {
+            switchTab('profile');
+        }
+
+        // Responsive handler
+        window.addEventListener('resize', () => {
+            if (window.innerWidth >= 1024) {
+                document.querySelectorAll('.tab-view.active').forEach(el => el.classList.add('desktop-active'));
+            } else {
+                document.querySelectorAll('.tab-view').forEach(el => el.classList.remove('desktop-active'));
+            }
+        });
+
+        // Start
+        init();
+    </script>
+</body>
+</html>
