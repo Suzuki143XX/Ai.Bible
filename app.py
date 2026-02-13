@@ -31,23 +31,24 @@ db_path = os.path.join(os.path.dirname(__file__), "bible_ios.db")
 import os
 
 # Use PostgreSQL on Render, SQLite locally
-DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///bible_ios.db')
+DATABASE_URL = os.environ.get('DATABASE_URL')
 
-if DATABASE_URL.startswith('postgres'):
+if DATABASE_URL and DATABASE_URL.startswith('postgres'):
     import psycopg2
     from psycopg2.extras import RealDictCursor
     
+    db_path = None  # Not used for PostgreSQL
+    
     def get_db():
         conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        return conn, cur
+        return conn
 else:
     db_path = os.path.join(os.path.dirname(__file__), "bible_ios.db")
     
     def get_db():
         conn = sqlite3.connect(db_path, timeout=20)
         conn.row_factory = sqlite3.Row
-        return conn, None
+        return conn
 def init_db():
     conn = get_db()
     c = conn.cursor()
@@ -832,5 +833,6 @@ if __name__ == '__main__':
         print(f"Open http://localhost:5000")
     
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)
+
 
 
