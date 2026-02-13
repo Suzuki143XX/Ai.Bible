@@ -28,11 +28,26 @@ ADMIN_CODE = "God Is All"
 
 db_path = os.path.join(os.path.dirname(__file__), "bible_ios.db")
 
-def get_db():
-    conn = sqlite3.connect(db_path, timeout=20)
-    conn.row_factory = sqlite3.Row
-    return conn
+import os
 
+# Use PostgreSQL on Render, SQLite locally
+DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///bible_ios.db')
+
+if DATABASE_URL.startswith('postgres'):
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    
+    def get_db():
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        return conn, cur
+else:
+    db_path = os.path.join(os.path.dirname(__file__), "bible_ios.db")
+    
+    def get_db():
+        conn = sqlite3.connect(db_path, timeout=20)
+        conn.row_factory = sqlite3.Row
+        return conn, None
 def init_db():
     conn = get_db()
     c = conn.cursor()
