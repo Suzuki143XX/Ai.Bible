@@ -19,9 +19,10 @@ def make_session_permanent():
     session.permanent = True
 app.secret_key = "bible-app-secret-key-2024-keep-this-safe"
 
-NGROK_AUTHTOKEN = "39RM1j4eX4gSd3EornIUrB4JscD_2zi2uH4gtx5jTmJE67Tuw"
-STATIC_DOMAIN = "noncompressive-nonpolitically-richie.ngrok-free.dev"
-PUBLIC_URL = f"https://{STATIC_DOMAIN}"
+GOOGLE_CLIENT_ID = "420462376171-neu8kbc7cm1geu2ov70gd10fh9e2210i.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "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"
+STATIC_DOMAIN = "aibible.onrender.com"
+PUBLIC_URL = "https://aibible.onrender.com"
 
 GOOGLE_CLIENT_ID = "420462376171-hpsgp580an2douisas893bqiki92ccsv.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET = "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"
@@ -820,3 +821,4 @@ if __name__ == '__main__':
         print(f"Open http://localhost:5000")
     
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)
+
