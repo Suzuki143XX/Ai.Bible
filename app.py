@@ -1,16 +1,13 @@
 from flask import Flask, render_template, jsonify, request, redirect, url_for, session, send_from_directory, flash
 import sqlite3
 import time
-import threading
 import requests
 import os
 import re
 import secrets
 import json
-import random
 import logging
 from datetime import datetime, timedelta
-from functools import wraps
 
 # CRITICAL: Import psycopg2 at TOP LEVEL for Render
 try:
@@ -19,7 +16,6 @@ try:
     POSTGRES_AVAILABLE = True
 except ImportError:
     POSTGRES_AVAILABLE = False
-    print("WARNING: psycopg2 not available, using SQLite")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -31,8 +27,7 @@ app.permanent_session_lifetime = timedelta(days=30)
 def make_session_permanent():
     session.permanent = True
 
-app.secret_key = os.environ.get("SECRET_KEY", "bible-app-secret-key-2024")
-STATIC_DOMAIN = os.environ.get("STATIC_DOMAIN", "aibible.onrender.com")
+app.secret_key = os.environ.get("SECRET_KEY", "bible-app-secret-key")
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://aibible.onrender.com")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
@@ -69,25 +64,23 @@ def get_cursor(conn, db_type):
     else:
         return conn.cursor()
 
-def db_execute(c, sql, params=(), db_type='sqlite'):
-    """Execute SQL with param substitution"""
-    if db_type == 'postgres':
-        sql = sql.replace('?', '%s')
-        if 'INSERT OR IGNORE' in sql:
-            sql = sql.replace('INSERT OR IGNORE', 'INSERT')
-            sql += ' ON CONFLICT DO NOTHING'
-    c.execute(sql, params)
-    return c
+def get_count(c, db_type):
+    """Safely get COUNT result"""
+    row = c.fetchone()
+    if row is None:
+        return 0
+    if isinstance(row, dict):
+        return row.get('count', 0)
+    return row[0]
 
 def init_db():
-    """Initialize database with all tables"""
+    """Initialize database"""
     conn = None
     try:
         conn, db_type = get_db()
         c = get_cursor(conn, db_type)
         
         if db_type == 'postgres':
-            # PostgreSQL tables
             c.execute('''CREATE TABLE IF NOT EXISTS verses 
                          (id SERIAL PRIMARY KEY, reference TEXT, text TEXT, 
                           translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
@@ -109,36 +102,23 @@ def init_db():
                          (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER,
                           text TEXT, timestamp TEXT, google_name TEXT, google_picture TEXT)''')
             
-            c.execute('''CREATE TABLE IF NOT EXISTS collections 
-                         (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, 
-                          color TEXT, created_at TEXT)''')
-            
-            c.execute('''CREATE TABLE IF NOT EXISTS verse_collections 
-                         (id SERIAL PRIMARY KEY, collection_id INTEGER, verse_id INTEGER,
-                          UNIQUE(collection_id, verse_id))''')
-            
-            c.execute('''CREATE TABLE IF NOT EXISTS verse_sessions 
-                         (id SERIAL PRIMARY KEY, verse_id INTEGER, session_id TEXT,
-                          created_at TEXT, expires_at TEXT)''')
-            
             c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
                          (id SERIAL PRIMARY KEY, user_id INTEGER, text TEXT, 
                           timestamp TEXT, google_name TEXT, google_picture TEXT)''')
             
             # Add missing columns
-            c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='is_banned'")
-            if not c.fetchone():
-                c.execute("ALTER TABLE users ADD COLUMN is_banned BOOLEAN DEFAULT FALSE")
-                c.execute("ALTER TABLE users ADD COLUMN ban_expires_at TIMESTAMP")
-                c.execute("ALTER TABLE users ADD COLUMN ban_reason TEXT")
-                logger.info("Added ban columns to PostgreSQL")
-            
-            c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='role'")
-            if not c.fetchone():
-                c.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
-                logger.info("Added role column to PostgreSQL")
+            for col in ['is_banned', 'ban_expires_at', 'ban_reason', 'role']:
+                c.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='{col}'")
+                if not c.fetchone():
+                    if col == 'is_banned':
+                        c.execute("ALTER TABLE users ADD COLUMN is_banned BOOLEAN DEFAULT FALSE")
+                    elif col == 'ban_expires_at':
+                        c.execute("ALTER TABLE users ADD COLUMN ban_expires_at TIMESTAMP")
+                    elif col == 'ban_reason':
+                        c.execute("ALTER TABLE users ADD COLUMN ban_reason TEXT")
+                    elif col == 'role':
+                        c.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
         else:
-            # SQLite tables
             c.execute('''CREATE TABLE IF NOT EXISTS verses 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, reference TEXT, text TEXT, 
                           translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
@@ -160,18 +140,6 @@ def init_db():
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER,
                           text TEXT, timestamp TEXT, google_name TEXT, google_picture TEXT)''')
             
-            c.execute('''CREATE TABLE IF NOT EXISTS collections 
-                         (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, 
-                          color TEXT, created_at TEXT)''')
-            
-            c.execute('''CREATE TABLE IF NOT EXISTS verse_collections 
-                         (id INTEGER PRIMARY KEY AUTOINCREMENT, collection_id INTEGER, verse_id INTEGER,
-                          UNIQUE(collection_id, verse_id))''')
-            
-            c.execute('''CREATE TABLE IF NOT EXISTS verse_sessions 
-                         (id INTEGER PRIMARY KEY AUTOINCREMENT, verse_id INTEGER, session_id TEXT,
-                          created_at TEXT, expires_at TEXT)''')
-            
             c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, text TEXT, 
                           timestamp TEXT, google_name TEXT, google_picture TEXT)''')
@@ -188,7 +156,7 @@ def init_db():
 init_db()
 
 def check_ban_status(user_id):
-    """Check if user is banned - CRITICAL FUNCTION"""
+    """Check if user is banned"""
     if not user_id:
         return False, None, None
     
@@ -208,23 +176,13 @@ def check_ban_status(user_id):
             return False, None, None
         
         if isinstance(row, dict):
-            is_banned_raw = row.get('is_banned', False)
+            is_banned = bool(row.get('is_banned', False))
             expires = row.get('ban_expires_at')
             reason = row.get('ban_reason')
         else:
-            is_banned_raw = row[0]
+            is_banned = bool(row[0])
             expires = row[1] if len(row) > 1 else None
             reason = row[2] if len(row) > 2 else None
-        
-        # Normalize boolean
-        if isinstance(is_banned_raw, bool):
-            is_banned = is_banned_raw
-        elif isinstance(is_banned_raw, int):
-            is_banned = bool(is_banned_raw)
-        elif isinstance(is_banned_raw, str):
-            is_banned = is_banned_raw.lower() in ('true', 't', '1', 'yes')
-        else:
-            is_banned = False
         
         # Check expiry
         if is_banned and expires:
@@ -247,7 +205,7 @@ def check_ban_status(user_id):
                     conn.commit()
                     return False, None, None
             except Exception as e:
-                logger.error(f"Ban expiry check error: {e}")
+                logger.error(f"Ban expiry error: {e}")
         
         return is_banned, reason, expires
         
@@ -258,11 +216,10 @@ def check_ban_status(user_id):
         if conn:
             conn.close()
 
-# GLOBAL BAN CHECK
 @app.before_request
 def global_ban_check():
-    """Check ban status before every request"""
-    if request.endpoint in ['static', 'serve_audio', 'manifest', 'login', 'callback', 'google_login']:
+    """Global ban check"""
+    if request.endpoint in ['static', 'login', 'callback', 'google_login']:
         return
     
     if 'user_id' not in session:
@@ -271,15 +228,13 @@ def global_ban_check():
     is_banned, reason, expires = check_ban_status(session['user_id'])
     
     if is_banned:
-        logger.warning(f"Banned user {session['user_id']} attempted to access {request.path}")
+        session.clear()
         
         if expires:
             expires_str = expires[:16] if isinstance(expires, str) else expires.strftime('%Y-%m-%d %H:%M')
             msg = f'Banned until {expires_str}. Reason: {reason or "Violation"}'
         else:
             msg = f'Permanently banned. Reason: {reason or "Violation"}'
-        
-        session.clear()
         
         if request.path.startswith('/api/'):
             return jsonify({"error": msg, "banned": True}), 403
@@ -289,7 +244,6 @@ def global_ban_check():
 
 class BibleGenerator:
     def __init__(self):
-        self.running = True
         self.interval = 60
         self.current_verse = {
             "id": 1,
@@ -307,7 +261,6 @@ class BibleGenerator:
         self.networks = [
             {"name": "Bible-API.com", "url": "https://bible-api.com/?random=verse"},
             {"name": "labs.bible.org", "url": "https://labs.bible.org/api/?passage=random&type=json"},
-            {"name": "KJV Random", "url": "https://bible-api.com/?random=verse&translation=kjv"}
         ]
         self.network_idx = 0
         self.session = requests.Session()
@@ -381,98 +334,8 @@ class BibleGenerator:
         
         self.network_idx = (self.network_idx + 1) % len(self.networks)
         return False
-    
-    def generate_smart_recommendation(self, user_id):
-        try:
-            conn, db_type = get_db()
-            c = get_cursor(conn, db_type)
-            
-            if db_type == 'postgres':
-                c.execute("""
-                    SELECT DISTINCT v.book FROM verses v 
-                    JOIN likes l ON v.id = l.verse_id WHERE l.user_id = %s
-                    UNION
-                    SELECT DISTINCT v.book FROM verses v 
-                    JOIN saves s ON v.id = s.verse_id WHERE s.user_id = %s
-                """, (user_id, user_id))
-            else:
-                c.execute("""
-                    SELECT DISTINCT v.book FROM verses v 
-                    JOIN likes l ON v.id = l.verse_id WHERE l.user_id = ?
-                    UNION
-                    SELECT DISTINCT v.book FROM verses v 
-                    JOIN saves s ON v.id = s.verse_id WHERE s.user_id = ?
-                """, (user_id, user_id))
-            
-            rows = c.fetchall()
-            preferred_books = [row[0] if not isinstance(row, dict) else row['book'] for row in rows]
-            
-            if preferred_books:
-                if db_type == 'postgres':
-                    placeholders = ','.join(['%s'] * len(preferred_books))
-                    c.execute(f"""
-                        SELECT * FROM verses WHERE book IN ({placeholders})
-                        AND id NOT IN (SELECT verse_id FROM likes WHERE user_id = %s)
-                        ORDER BY RANDOM() LIMIT 1
-                    """, (*preferred_books, user_id))
-                else:
-                    placeholders = ','.join('?' for _ in preferred_books)
-                    c.execute(f"""
-                        SELECT * FROM verses WHERE book IN ({placeholders})
-                        AND id NOT IN (SELECT verse_id FROM likes WHERE user_id = ?)
-                        ORDER BY RANDOM() LIMIT 1
-                    """, (*preferred_books, user_id))
-            else:
-                if db_type == 'postgres':
-                    c.execute("""
-                        SELECT * FROM verses 
-                        WHERE id NOT IN (SELECT verse_id FROM likes WHERE user_id = %s)
-                        ORDER BY RANDOM() LIMIT 1
-                    """, (user_id,))
-                else:
-                    c.execute("""
-                        SELECT * FROM verses 
-                        WHERE id NOT IN (SELECT verse_id FROM likes WHERE user_id = ?)
-                        ORDER BY RANDOM() LIMIT 1
-                    """, (user_id,))
-            
-            row = c.fetchone()
-            conn.close()
-            
-            if row:
-                if isinstance(row, dict):
-                    return {
-                        "id": row['id'], "ref": row['reference'], "text": row['text'],
-                        "trans": row['translation'], "book": row['book'],
-                        "reason": f"Because you like {row['book']}" if preferred_books else "Recommended for you"
-                    }
-                else:
-                    return {
-                        "id": row[0], "ref": row[1], "text": row[2],
-                        "trans": row[3], "book": row[6],
-                        "reason": f"Because you like {row[6]}" if preferred_books else "Recommended for you"
-                    }
-        except Exception as e:
-            logger.error(f"Recommendation error: {e}")
-        return None
 
 generator = BibleGenerator()
-
-@app.route('/static/audio/<path:filename>')
-def serve_audio(filename):
-    return send_from_directory(os.path.join(app.root_path, 'static', 'audio'), filename)
-
-@app.route('/manifest.json')
-def manifest():
-    return jsonify({
-        "name": "Bible AI",
-        "short_name": "BibleAI",
-        "start_url": "/",
-        "display": "standalone",
-        "background_color": "#000000",
-        "theme_color": "#0A84FF",
-        "icons": [{"src": "/static/icon.png", "sizes": "192x192"}]
-    })
 
 @app.route('/')
 def index():
@@ -483,10 +346,11 @@ def index():
         conn, db_type = get_db()
         c = get_cursor(conn, db_type)
         
+        # Get user
         if db_type == 'postgres':
-            c.execute("SELECT * FROM users WHERE id = %s", (session['user_id'],))
+            c.execute("SELECT id, email, name, picture, is_admin, is_banned, ban_reason, ban_expires_at FROM users WHERE id = %s", (session['user_id'],))
         else:
-            c.execute("SELECT * FROM users WHERE id = ?", (session['user_id'],))
+            c.execute("SELECT id, email, name, picture, is_admin, is_banned, ban_reason, ban_expires_at FROM users WHERE id = ?", (session['user_id'],))
         
         user = c.fetchone()
         
@@ -495,43 +359,51 @@ def index():
             conn.close()
             return redirect(url_for('login'))
         
-        # Extract user data
+        # Extract user data safely
         if isinstance(user, dict):
             user_data = {
-                'id': user['id'], 'email': user['email'], 'name': user['name'],
-                'picture': user['picture'], 'is_admin': bool(user.get('is_admin', 0)),
+                'id': user['id'],
+                'email': user.get('email', ''),
+                'name': user.get('name', ''),
+                'picture': user.get('picture', ''),
+                'is_admin': bool(user.get('is_admin', 0)),
                 'is_banned': bool(user.get('is_banned', False)),
                 'ban_reason': user.get('ban_reason'),
                 'ban_expires_at': user.get('ban_expires_at')
             }
         else:
             user_data = {
-                'id': user[0], 'email': user[2], 'name': user[3], 'picture': user[4],
-                'is_admin': bool(user[6]) if len(user) > 6 else False,
-                'is_banned': bool(user[7]) if len(user) > 7 else False,
-                'ban_reason': user[8] if len(user) > 8 else None,
-                'ban_expires_at': user[9] if len(user) > 9 else None
+                'id': user[0],
+                'email': user[1] if len(user) > 1 else '',
+                'name': user[2] if len(user) > 2 else '',
+                'picture': user[3] if len(user) > 3 else '',
+                'is_admin': bool(user[4]) if len(user) > 4 else False,
+                'is_banned': bool(user[5]) if len(user) > 5 else False,
+                'ban_reason': user[6] if len(user) > 6 else None,
+                'ban_expires_at': user[7] if len(user) > 7 else None
             }
         
-        # Get stats
+        # Get stats safely
         c.execute("SELECT COUNT(*) FROM verses")
-        total_verses = c.fetchone()
-        total_verses = total_verses[0] if not isinstance(total_verses, dict) else total_verses.get('count', 0)
+        total_verses = get_count(c, db_type)
         
         if db_type == 'postgres':
             c.execute("SELECT COUNT(*) FROM likes WHERE user_id = %s", (session['user_id'],))
-            liked_count = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM saves WHERE user_id = %s", (session['user_id'],))
-            saved_count = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM comments WHERE user_id = %s", (session['user_id'],))
-            comment_count = c.fetchone()[0]
         else:
             c.execute("SELECT COUNT(*) FROM likes WHERE user_id = ?", (session['user_id'],))
-            liked_count = c.fetchone()[0]
+        liked_count = get_count(c, db_type)
+        
+        if db_type == 'postgres':
+            c.execute("SELECT COUNT(*) FROM saves WHERE user_id = %s", (session['user_id'],))
+        else:
             c.execute("SELECT COUNT(*) FROM saves WHERE user_id = ?", (session['user_id'],))
-            saved_count = c.fetchone()[0]
+        saved_count = get_count(c, db_type)
+        
+        if db_type == 'postgres':
+            c.execute("SELECT COUNT(*) FROM comments WHERE user_id = %s", (session['user_id'],))
+        else:
             c.execute("SELECT COUNT(*) FROM comments WHERE user_id = ?", (session['user_id'],))
-            comment_count = c.fetchone()[0]
+        comment_count = get_count(c, db_type)
         
         conn.close()
         
@@ -540,6 +412,8 @@ def index():
                              stats={"total_verses": total_verses, "liked": liked_count, "saved": saved_count, "comments": comment_count})
     except Exception as e:
         logger.error(f"Index error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return f"Server Error: {str(e)}", 500
 
 @app.route('/login')
@@ -558,14 +432,7 @@ def google_login():
         state = secrets.token_urlsafe(16)
         session['oauth_state'] = state
         
-        auth_url = (
-            f"{authorization_endpoint}"
-            f"?client_id={GOOGLE_CLIENT_ID}"
-            f"&redirect_uri={callback_url}"
-            f"&response_type=code"
-            f"&scope=openid%20email%20profile"
-            f"&state={state}"
-        )
+        auth_url = f"{authorization_endpoint}?client_id={GOOGLE_CLIENT_ID}&redirect_uri={callback_url}&response_type=code&scope=openid%20email%20profile&state={state}"
         return redirect(auth_url)
     except Exception as e:
         logger.error(f"Login error: {e}")
@@ -580,7 +447,7 @@ def callback():
     if error:
         return f"OAuth Error: {error}", 400
     if not code:
-        return "No authorization code", 400
+        return "No code", 400
     if state != session.get('oauth_state'):
         return "Invalid state", 400
     
@@ -589,16 +456,10 @@ def callback():
         token_endpoint = google_provider_cfg["token_endpoint"]
         callback_url = PUBLIC_URL + "/callback"
         
-        token_response = requests.post(
-            token_endpoint,
-            data={
-                "code": code,
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uri": callback_url,
-                "grant_type": "authorization_code",
-            },
-        )
+        token_response = requests.post(token_endpoint, data={
+            "code": code, "client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri": callback_url, "grant_type": "authorization_code",
+        })
         
         if not token_response.ok:
             return f"Token error: {token_response.text}", 400
@@ -607,10 +468,7 @@ def callback():
         access_token = tokens.get("access_token")
         
         userinfo_endpoint = google_provider_cfg["userinfo_endpoint"]
-        userinfo_response = requests.get(
-            userinfo_endpoint,
-            headers={"Authorization": f"Bearer {access_token}"}
-        )
+        userinfo_response = requests.get(userinfo_endpoint, headers={"Authorization": f"Bearer {access_token}"})
         
         if not userinfo_response.ok:
             return "Failed to get user info", 400
@@ -625,32 +483,33 @@ def callback():
         c = get_cursor(conn, db_type)
         
         if db_type == 'postgres':
-            c.execute("SELECT * FROM users WHERE google_id = %s", (google_id,))
+            c.execute("SELECT id, is_admin, is_banned, ban_expires_at, ban_reason FROM users WHERE google_id = %s", (google_id,))
         else:
-            c.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
+            c.execute("SELECT id, is_admin, is_banned, ban_expires_at, ban_reason FROM users WHERE google_id = ?", (google_id,))
         
         user = c.fetchone()
         
         if not user:
+            # Create new user
             if db_type == 'postgres':
                 c.execute("""
                     INSERT INTO users (google_id, email, name, picture, created_at, is_admin, is_banned, role) 
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """, (google_id, email, name, picture, datetime.now().isoformat(), 0, False, 'user'))
             else:
                 c.execute("""
-                    INSERT OR IGNORE INTO users (google_id, email, name, picture, created_at, is_admin, is_banned, role) 
+                    INSERT INTO users (google_id, email, name, picture, created_at, is_admin, is_banned, role) 
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, (google_id, email, name, picture, datetime.now().isoformat(), 0, 0, 'user'))
             conn.commit()
             
             if db_type == 'postgres':
-                c.execute("SELECT * FROM users WHERE google_id = %s", (google_id,))
+                c.execute("SELECT id, is_admin FROM users WHERE google_id = %s", (google_id,))
             else:
-                c.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
+                c.execute("SELECT id, is_admin FROM users WHERE google_id = ?", (google_id,))
             user = c.fetchone()
         
-        # Extract user data
+        # Extract data
         if isinstance(user, dict):
             user_id = user['id']
             is_banned = bool(user.get('is_banned', False))
@@ -659,12 +518,12 @@ def callback():
             is_admin = bool(user.get('is_admin', 0))
         else:
             user_id = user[0]
-            is_banned = bool(user[7]) if len(user) > 7 else False
-            ban_expires = user[8] if len(user) > 8 else None
-            ban_reason = user[9] if len(user) > 9 else None
-            is_admin = bool(user[6]) if len(user) > 6 else False
+            is_admin = bool(user[1]) if len(user) > 1 else False
+            is_banned = bool(user[2]) if len(user) > 2 else False
+            ban_expires = user[3] if len(user) > 3 else None
+            ban_reason = user[4] if len(user) > 4 else None
         
-        # Check ban expiry
+        # Check ban
         if is_banned and ban_expires:
             try:
                 if isinstance(ban_expires, str):
@@ -712,7 +571,9 @@ def callback():
         return redirect(url_for('index'))
     except Exception as e:
         logger.error(f"Callback error: {e}")
-        return f"Authentication error: {str(e)}", 500   
+        import traceback
+        logger.error(traceback.format_exc())
+        return f"Error: {str(e)}", 500
 
 @app.route('/logout')
 def logout():
@@ -733,117 +594,6 @@ def get_current():
             "session_id": generator.session_id,
             "interval": generator.interval
         })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/set_interval', methods=['POST'])
-def set_interval():
-    if 'user_id' not in session:
-        return jsonify({"error": "Not logged in"}), 401
-    
-    if not session.get('is_admin'):
-        return jsonify({"error": "Admin required"}), 403
-    
-    data = request.get_json()
-    interval = data.get('interval', 60)
-    generator.set_interval(interval)
-    return jsonify({"success": True, "interval": generator.interval})
-
-@app.route('/api/user_info')
-def get_user_info():
-    if 'user_id' not in session:
-        return jsonify({"error": "Not logged in"}), 401
-    
-    try:
-        conn, db_type = get_db()
-        c = get_cursor(conn, db_type)
-        
-        if db_type == 'postgres':
-            c.execute("SELECT created_at, is_admin, is_banned, ban_expires_at, ban_reason FROM users WHERE id = %s", (session['user_id'],))
-        else:
-            c.execute("SELECT created_at, is_admin, is_banned, ban_expires_at, ban_reason FROM users WHERE id = ?", (session['user_id'],))
-        
-        row = c.fetchone()
-        conn.close()
-        
-        if row:
-            if isinstance(row, dict):
-                return jsonify({
-                    "created_at": row['created_at'],
-                    "is_admin": bool(row.get('is_admin', 0)),
-                    "is_banned": bool(row.get('is_banned', False)),
-                    "ban_reason": row.get('ban_reason'),
-                    "ban_expires_at": row.get('ban_expires_at')
-                })
-            else:
-                return jsonify({
-                    "created_at": row[0],
-                    "is_admin": bool(row[1]) if len(row) > 1 else False,
-                    "is_banned": bool(row[2]) if len(row) > 2 else False,
-                    "ban_reason": row[3] if len(row) > 3 else None,
-                    "ban_expires_at": row[4] if len(row) > 4 else None
-                })
-        return jsonify({})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/verify_admin', methods=['POST'])
-def verify_admin():
-    if 'user_id' not in session:
-        return jsonify({"error": "Not logged in"}), 401
-    
-    data = request.get_json()
-    code = data.get('code', '')
-    
-    if code == ADMIN_CODE:
-        try:
-            conn, db_type = get_db()
-            c = get_cursor(conn, db_type)
-            
-            if db_type == 'postgres':
-                c.execute("UPDATE users SET is_admin = 1 WHERE id = %s", (session['user_id'],))
-            else:
-                c.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (session['user_id'],))
-            conn.commit()
-            conn.close()
-            
-            session['is_admin'] = True
-            return jsonify({"success": True})
-        except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
-    else:
-        return jsonify({"success": False, "error": "Wrong code"})
-
-@app.route('/api/stats')
-def get_stats():
-    if 'user_id' not in session:
-        return jsonify({"error": "Not logged in"}), 401
-    
-    try:
-        conn, db_type = get_db()
-        c = get_cursor(conn, db_type)
-        
-        c.execute("SELECT COUNT(*) FROM verses")
-        row = c.fetchone()
-        total = row[0] if not isinstance(row, dict) else row.get('count', 0)
-        
-        if db_type == 'postgres':
-            c.execute("SELECT COUNT(*) FROM likes WHERE user_id = %s", (session['user_id'],))
-            liked = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM saves WHERE user_id = %s", (session['user_id'],))
-            saved = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM comments WHERE user_id = %s", (session['user_id'],))
-            comments = c.fetchone()[0]
-        else:
-            c.execute("SELECT COUNT(*) FROM likes WHERE user_id = ?", (session['user_id'],))
-            liked = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM saves WHERE user_id = ?", (session['user_id'],))
-            saved = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM comments WHERE user_id = ?", (session['user_id'],))
-            comments = c.fetchone()[0]
-        
-        conn.close()
-        return jsonify({"total_verses": total, "liked": liked, "saved": saved, "comments": comments})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -884,11 +634,6 @@ def like_verse():
         
         conn.commit()
         conn.close()
-        
-        if liked:
-            rec = generator.generate_smart_recommendation(session['user_id'])
-            return jsonify({"liked": liked, "recommendation": rec})
-        
         return jsonify({"liked": liked})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -937,35 +682,26 @@ def save_verse():
 @app.route('/api/library')
 def get_library():
     if 'user_id' not in session:
-        return jsonify({"liked": [], "saved": [], "collections": []})
+        return jsonify({"liked": [], "saved": []})
     
     try:
         conn, db_type = get_db()
         c = get_cursor(conn, db_type)
         
         if db_type == 'postgres':
-            c.execute("""
-                SELECT v.id, v.reference, v.text, v.translation, v.source, v.book, l.timestamp as liked_at
-                FROM verses v JOIN likes l ON v.id = l.verse_id WHERE l.user_id = %s ORDER BY l.timestamp DESC
-            """, (session['user_id'],))
+            c.execute("SELECT v.id, v.reference, v.text, v.translation, v.source, v.book FROM verses v JOIN likes l ON v.id = l.verse_id WHERE l.user_id = %s ORDER BY l.timestamp DESC", (session['user_id'],))
         else:
-            c.execute("""
-                SELECT v.id, v.reference, v.text, v.translation, v.source, v.book, l.timestamp as liked_at
-                FROM verses v JOIN likes l ON v.id = l.verse_id WHERE l.user_id = ? ORDER BY l.timestamp DESC
-            """, (session['user_id'],))
+            c.execute("SELECT v.id, v.reference, v.text, v.translation, v.source, v.book FROM verses v JOIN likes l ON v.id = l.verse_id WHERE l.user_id = ? ORDER BY l.timestamp DESC", (session['user_id'],))
+        
         liked_rows = c.fetchall()
         
         if db_type == 'postgres':
-            c.execute("""
-                SELECT v.id, v.reference, v.text, v.translation, v.source, v.book, s.timestamp as saved_at
-                FROM verses v JOIN saves s ON v.id = s.verse_id WHERE s.user_id = %s ORDER BY s.timestamp DESC
-            """, (session['user_id'],))
+            c.execute("SELECT v.id, v.reference, v.text, v.translation, v.source, v.book FROM verses v JOIN saves s ON v.id = s.verse_id WHERE s.user_id = %s ORDER BY s.timestamp DESC", (session['user_id'],))
         else:
-            c.execute("""
-                SELECT v.id, v.reference, v.text, v.translation, v.source, v.book, s.timestamp as saved_at
-                FROM verses v JOIN saves s ON v.id = s.verse_id WHERE s.user_id = ? ORDER BY s.timestamp DESC
-            """, (session['user_id'],))
+            c.execute("SELECT v.id, v.reference, v.text, v.translation, v.source, v.book FROM verses v JOIN saves s ON v.id = s.verse_id WHERE s.user_id = ? ORDER BY s.timestamp DESC", (session['user_id'],))
+        
         saved_rows = c.fetchall()
+        conn.close()
         
         def row_to_dict(row):
             if isinstance(row, dict):
@@ -977,8 +713,7 @@ def get_library():
         liked = [row_to_dict(row) for row in liked_rows]
         saved = [row_to_dict(row) for row in saved_rows]
         
-        conn.close()
-        return jsonify({"liked": liked, "saved": saved, "collections": []})
+        return jsonify({"liked": liked, "saved": saved})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -989,15 +724,9 @@ def get_comments(verse_id):
         c = get_cursor(conn, db_type)
         
         if db_type == 'postgres':
-            c.execute("""
-                SELECT c.*, u.name, u.picture FROM comments c
-                JOIN users u ON c.user_id = u.id WHERE c.verse_id = %s ORDER BY c.timestamp DESC
-            """, (verse_id,))
+            c.execute("SELECT c.id, c.text, c.timestamp, u.name, u.picture FROM comments c JOIN users u ON c.user_id = u.id WHERE c.verse_id = %s ORDER BY c.timestamp DESC", (verse_id,))
         else:
-            c.execute("""
-                SELECT c.*, u.name, u.picture FROM comments c
-                JOIN users u ON c.user_id = u.id WHERE c.verse_id = ? ORDER BY c.timestamp DESC
-            """, (verse_id,))
+            c.execute("SELECT c.id, c.text, c.timestamp, u.name, u.picture FROM comments c JOIN users u ON c.user_id = u.id WHERE c.verse_id = ? ORDER BY c.timestamp DESC", (verse_id,))
         
         rows = c.fetchall()
         conn.close()
@@ -1011,8 +740,8 @@ def get_comments(verse_id):
                 })
             else:
                 comments.append({
-                    "id": row[0], "text": row[3], "timestamp": row[4],
-                    "user_name": row[7], "user_picture": row[8]
+                    "id": row[0], "text": row[1], "timestamp": row[2],
+                    "user_name": row[3], "user_picture": row[4]
                 })
         
         return jsonify(comments)
@@ -1092,10 +821,10 @@ def get_community_messages():
         conn, db_type = get_db()
         c = get_cursor(conn, db_type)
         
-        c.execute("""
-            SELECT m.*, u.name, u.picture FROM community_messages m
-            JOIN users u ON m.user_id = u.id ORDER BY m.timestamp DESC LIMIT 100
-        """)
+        if db_type == 'postgres':
+            c.execute("SELECT m.id, m.text, m.timestamp, u.name, u.picture FROM community_messages m JOIN users u ON m.user_id = u.id ORDER BY m.timestamp DESC LIMIT 100")
+        else:
+            c.execute("SELECT m.id, m.text, m.timestamp, u.name, u.picture FROM community_messages m JOIN users u ON m.user_id = u.id ORDER BY m.timestamp DESC LIMIT 100")
         
         rows = c.fetchall()
         conn.close()
@@ -1109,8 +838,8 @@ def get_community_messages():
                 })
             else:
                 messages.append({
-                    "id": row[0], "text": row[2], "timestamp": row[3],
-                    "user_name": row[6], "user_picture": row[7]
+                    "id": row[0], "text": row[1], "timestamp": row[2],
+                    "user_name": row[3], "user_picture": row[4]
                 })
         
         return jsonify(messages)
@@ -1225,7 +954,6 @@ def check_save(verse_id):
 
 @app.route('/api/ban_status')
 def ban_status():
-    """Get current user's ban status"""
     if 'user_id' not in session:
         return jsonify({"error": "Not logged in"}), 401
     
