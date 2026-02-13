@@ -24,8 +24,9 @@ def make_session_permanent():
 PUBLIC_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://localhost:5000")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-print(f"DEBUG: CLIENT_ID loaded: {GOOGLE_CLIENT_ID[:20]}..." if GOOGLE_CLIENT_ID else "DEBUG: CLIENT_ID is EMPTY!")
-print(f"DEBUG: CLIENT_SECRET loaded: {GOOGLE_CLIENT_SECRET[:10]}..." if GOOGLE_CLIENT_SECRET else "DEBUG: CLIENT_SECRET is EMPTY!")
+print(f"DEBUG: CLIENT_ID length: {len(GOOGLE_CLIENT_ID)}")
+print(f"DEBUG: CLIENT_ID repr: {repr(GOOGLE_CLIENT_ID)}")
+print(f"DEBUG: CLIENT_SECRET length: {len(GOOGLE_CLIENT_SECRET)}")
 GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
 ADMIN_CODE = os.environ.get("ADMIN_CODE", "God Is All")
 
@@ -798,3 +799,4 @@ if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
 
     app.run(host='0.0.0.0', port=port, debug=False)
+
