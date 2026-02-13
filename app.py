@@ -19,17 +19,20 @@ def make_session_permanent():
     session.permanent = True
 app.secret_key = "bible-app-secret-key-2024-keep-this-safe"
 
-GOOGLE_CLIENT_ID = "420462376171-neu8kbc7cm1geu2ov70gd10fh9e2210i.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET = "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"
 STATIC_DOMAIN = "aibible.onrender.com"
 PUBLIC_URL = "https://aibible.onrender.com"
+
+GOOGLE_CLIENT_ID = "420462376171-neu8kbc7cm1geu2ov70gd10fh9e2210i.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "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"
 GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
+
 ADMIN_CODE = "God Is All"
 
+# Database setup - PostgreSQL on Render, SQLite locally
+DATABASE_URL = os.environ.get('DATABASE_URL')
 db_path = os.path.join(os.path.dirname(__file__), "bible_ios.db")
 
 def get_db():
-    DATABASE_URL = os.environ.get('DATABASE_URL')
     if DATABASE_URL and DATABASE_URL.startswith('postgres'):
         import psycopg2
         conn = psycopg2.connect(DATABASE_URL)
@@ -39,11 +42,16 @@ def get_db():
         conn.row_factory = sqlite3.Row
         return conn
 
+def db_execute(c, sql, params=()):
+    """Execute SQL compatible with both SQLite and PostgreSQL"""
+    if DATABASE_URL and DATABASE_URL.startswith('postgres'):
+        # Convert ? to %s for PostgreSQL
+        sql = sql.replace('?', '%s')
+    c.execute(sql, params)
+
 def init_db():
     conn = get_db()
     c = conn.cursor()
-    
-    DATABASE_URL = os.environ.get('DATABASE_URL')
     is_postgres = DATABASE_URL and DATABASE_URL.startswith('postgres')
     
     if is_postgres:
@@ -102,98 +110,6 @@ def init_db():
         c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
                      (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, text TEXT, 
                       timestamp TEXT, google_name TEXT, google_picture TEXT)''')
-        
-        try:
-            c.execute("SELECT is_admin FROM users LIMIT 1")
-        except sqlite3.OperationalError:
-            c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
-    
-    conn.commit()
-    conn.close()
-def init_db():
-    conn = get_db()
-    
-    # Check if PostgreSQL or SQLite
-    is_postgres = DATABASE_URL and DATABASE_URL.startswith('postgres')
-    
-    if is_postgres:
-        c = conn.cursor()
-        # PostgreSQL syntax (SERIAL instead of AUTOINCREMENT)
-        c.execute('''CREATE TABLE IF NOT EXISTS verses 
-                     (id SERIAL PRIMARY KEY, reference TEXT, text TEXT, 
-                      translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS users 
-                     (id SERIAL PRIMARY KEY, google_id TEXT UNIQUE, email TEXT, 
-                      name TEXT, picture TEXT, created_at TEXT, is_admin INTEGER DEFAULT 0)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS likes 
-                     (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER, 
-                      timestamp TEXT, UNIQUE(user_id, verse_id))''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS saves 
-                     (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER, 
-                      timestamp TEXT, UNIQUE(user_id, verse_id))''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS comments 
-                     (id SERIAL PRIMARY KEY, user_id INTEGER, verse_id INTEGER,
-                      text TEXT, timestamp TEXT, google_name TEXT, google_picture TEXT)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS collections 
-                     (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, 
-                      color TEXT, created_at TEXT)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS verse_collections 
-                     (id SERIAL PRIMARY KEY, collection_id INTEGER, verse_id INTEGER,
-                      UNIQUE(collection_id, verse_id))''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS verse_sessions 
-                     (id SERIAL PRIMARY KEY, verse_id INTEGER, session_id TEXT,
-                      created_at TEXT, expires_at TEXT)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
-                     (id SERIAL PRIMARY KEY, user_id INTEGER, text TEXT, 
-                      timestamp TEXT, google_name TEXT, google_picture TEXT)''')
-    else:
-        c = conn.cursor()
-        # SQLite syntax
-        c.execute('''CREATE TABLE IF NOT EXISTS verses 
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, reference TEXT, text TEXT, 
-                      translation TEXT, source TEXT, timestamp TEXT, book TEXT)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS users 
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, google_id TEXT UNIQUE, email TEXT, 
-                      name TEXT, picture TEXT, created_at TEXT, is_admin INTEGER DEFAULT 0)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS likes 
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER, 
-                      timestamp TEXT, UNIQUE(user_id, verse_id))''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS saves 
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER, 
-                      timestamp TEXT, UNIQUE(user_id, verse_id))''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS comments 
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, verse_id INTEGER,
-                      text TEXT, timestamp TEXT, google_name TEXT, google_picture TEXT)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS collections 
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, 
-                      color TEXT, created_at TEXT)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS verse_collections 
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, collection_id INTEGER, verse_id INTEGER,
-                      UNIQUE(collection_id, verse_id))''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS verse_sessions 
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, verse_id INTEGER, session_id TEXT,
-                      created_at TEXT, expires_at TEXT)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS community_messages 
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, text TEXT, 
-                      timestamp TEXT, google_name TEXT, google_picture TEXT)''')
-        
-        # Migration for SQLite
         try:
             c.execute("SELECT is_admin FROM users LIMIT 1")
         except sqlite3.OperationalError:
@@ -228,13 +144,13 @@ class BibleGenerator:
         try:
             conn = get_db()
             c = conn.cursor()
-            c.execute("SELECT expires_at FROM verse_sessions WHERE session_id = ? ORDER BY created_at DESC LIMIT 1", 
+            db_execute(c, "SELECT expires_at FROM verse_sessions WHERE session_id = ? ORDER BY created_at DESC LIMIT 1", 
                       (self.session_id,))
             row = c.fetchone()
             conn.close()
             
             if row:
-                expires = datetime.fromisoformat(row['expires_at'])
+                expires = datetime.fromisoformat(row[0] if isinstance(row, tuple) else row['expires_at'])
                 now = datetime.now()
                 diff = (expires - now).total_seconds()
                 return max(0, int(diff))
@@ -270,22 +186,22 @@ class BibleGenerator:
                 
                 conn = get_db()
                 c = conn.cursor()
-                c.execute("INSERT OR IGNORE INTO verses (reference, text, translation, source, timestamp, book) VALUES (?, ?, ?, ?, ?, ?)",
+                db_execute(c, "INSERT OR IGNORE INTO verses (reference, text, translation, source, timestamp, book) VALUES (?, ?, ?, ?, ?, ?)",
                           (ref, text, trans, network["name"], datetime.now().isoformat(), book))
                 conn.commit()
-                c.execute("SELECT id FROM verses WHERE reference = ? AND text = ?", (ref, text))
+                db_execute(c, "SELECT id FROM verses WHERE reference = ? AND text = ?", (ref, text))
                 result = c.fetchone()
-                verse_id = result['id'] if result else None
+                verse_id = result[0] if result else None
                 
                 self.session_id = secrets.token_hex(8)
                 expires = datetime.fromtimestamp(time.time() + self.interval).isoformat()
-                c.execute("INSERT INTO verse_sessions (verse_id, session_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                db_execute(c, "INSERT INTO verse_sessions (verse_id, session_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
                           (verse_id, self.session_id, datetime.now().isoformat(), expires))
                 
-                c.execute("SELECT id FROM collections WHERE name = ? AND user_id = 0", (book,))
+                db_execute(c, "SELECT id FROM collections WHERE name = ? AND user_id = 0", (book,))
                 if not c.fetchone():
                     colors = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A", "#98D8C8", "#F7DC6F", "#BB8FCE"]
-                    c.execute("INSERT INTO collections (user_id, name, color, created_at) VALUES (?, ?, ?, ?)",
+                    db_execute(c, "INSERT INTO collections (user_id, name, color, created_at) VALUES (?, ?, ?, ?)",
                               (0, book, random.choice(colors), datetime.now().isoformat()))
                 
                 conn.commit()
@@ -318,7 +234,7 @@ class BibleGenerator:
             WHERE s.user_id = ?
         """, (user_id, user_id))
         
-        preferred_books = [row['book'] for row in c.fetchall()]
+        preferred_books = [row[0] if isinstance(row, tuple) else row['book'] for row in c.fetchall()]
         
         if preferred_books:
             placeholders = ','.join('?' for _ in preferred_books)
@@ -342,9 +258,12 @@ class BibleGenerator:
         
         if row:
             return {
-                "id": row['id'], "ref": row['reference'], "text": row['text'],
-                "trans": row['translation'], "book": row['book'],
-                "reason": f"Because you like {row['book']}" if preferred_books else "Recommended for you"
+                "id": row[0] if isinstance(row, tuple) else row['id'], 
+                "ref": row[1] if isinstance(row, tuple) else row['reference'], 
+                "text": row[2] if isinstance(row, tuple) else row['text'],
+                "trans": row[3] if isinstance(row, tuple) else row['translation'], 
+                "book": row[4] if isinstance(row, tuple) else row['book'],
+                "reason": f"Because you like {row[4] if isinstance(row, tuple) else row['book']}" if preferred_books else "Recommended for you"
             }
         return None
 
@@ -373,15 +292,15 @@ def index():
     
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE id = ?", (session['user_id'],))
+    db_execute(c, "SELECT * FROM users WHERE id = ?", (session['user_id'],))
     user = c.fetchone()
     
     c.execute("SELECT COUNT(*) as count FROM verses")
-    total_verses = c.fetchone()['count']
-    c.execute("SELECT COUNT(*) as count FROM likes WHERE user_id = ?", (session['user_id'],))
-    liked_count = c.fetchone()['count']
-    c.execute("SELECT COUNT(*) as count FROM saves WHERE user_id = ?", (session['user_id'],))
-    saved_count = c.fetchone()['count']
+    total_verses = c.fetchone()[0]
+    db_execute(c, "SELECT COUNT(*) as count FROM likes WHERE user_id = ?", (session['user_id'],))
+    liked_count = c.fetchone()[0]
+    db_execute(c, "SELECT COUNT(*) as count FROM saves WHERE user_id = ?", (session['user_id'],))
+    saved_count = c.fetchone()[0]
     
     conn.close()
     
@@ -390,7 +309,10 @@ def index():
         return redirect(url_for('login'))
     
     return render_template('web.html', 
-                         user={"id": user['id'], "name": user['name'], "email": user['email'], "picture": user['picture']},
+                         user={"id": user[0] if isinstance(user, tuple) else user['id'], 
+                               "name": user[2] if isinstance(user, tuple) else user['name'], 
+                               "email": user[1] if isinstance(user, tuple) else user['email'], 
+                               "picture": user[3] if isinstance(user, tuple) else user['picture']},
                          stats={"total_verses": total_verses, "liked": liked_count, "saved": saved_count})
 
 @app.route('/login')
@@ -466,21 +388,21 @@ def callback():
     
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
+    db_execute(c, "SELECT * FROM users WHERE google_id = ?", (google_id,))
     user = c.fetchone()
     
     if not user:
-        c.execute("INSERT INTO users (google_id, email, name, picture, created_at, is_admin) VALUES (?, ?, ?, ?, ?, ?)",
+        db_execute(c, "INSERT INTO users (google_id, email, name, picture, created_at, is_admin) VALUES (?, ?, ?, ?, ?, ?)",
                   (google_id, email, name, picture, datetime.now().isoformat(), 0))
         conn.commit()
-        c.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
+        db_execute(c, "SELECT * FROM users WHERE google_id = ?", (google_id,))
         user = c.fetchone()
     
     conn.close()
-    session['user_id'] = user['id']
-    session['user_name'] = user['name']
-    session['user_picture'] = user['picture']
-    session['is_admin'] = bool(user['is_admin']) if user.keys() and 'is_admin' in user.keys() else False
+    session['user_id'] = user[0] if isinstance(user, tuple) else user['id']
+    session['user_name'] = user[2] if isinstance(user, tuple) else user['name']
+    session['user_picture'] = user[3] if isinstance(user, tuple) else user['picture']
+    session['is_admin'] = bool(user[5] if isinstance(user, tuple) else user['is_admin']) if user else False
     return redirect(url_for('index'))   
 
 @app.route('/logout')
@@ -523,14 +445,14 @@ def get_user_info():
     
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT created_at, is_admin FROM users WHERE id = ?", (session['user_id'],))
+    db_execute(c, "SELECT created_at, is_admin FROM users WHERE id = ?", (session['user_id'],))
     row = c.fetchone()
     conn.close()
     
     if row:
-        is_admin_val = bool(row['is_admin']) if row.keys() and 'is_admin' in row.keys() else False
+        is_admin_val = bool(row[1] if isinstance(row, tuple) else row['is_admin']) if row else False
         return jsonify({
-            "created_at": row['created_at'],
+            "created_at": row[0] if isinstance(row, tuple) else row['created_at'],
             "is_admin": is_admin_val,
             "session_admin": session.get('is_admin', False)
         })
@@ -547,7 +469,7 @@ def verify_admin():
     if code == ADMIN_CODE:
         conn = get_db()
         c = conn.cursor()
-        c.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (session['user_id'],))
+        db_execute(c, "UPDATE users SET is_admin = 1 WHERE id = ?", (session['user_id'],))
         conn.commit()
         conn.close()
         
@@ -563,13 +485,13 @@ def get_stats():
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT COUNT(*) as count FROM verses")
-    total = c.fetchone()['count']
-    c.execute("SELECT COUNT(*) as count FROM likes WHERE user_id = ?", (session['user_id'],))
-    liked = c.fetchone()['count']
-    c.execute("SELECT COUNT(*) as count FROM saves WHERE user_id = ?", (session['user_id'],))
-    saved = c.fetchone()['count']
-    c.execute("SELECT COUNT(*) as count FROM comments WHERE user_id = ?", (session['user_id'],))
-    comments = c.fetchone()['count']
+    total = c.fetchone()[0]
+    db_execute(c, "SELECT COUNT(*) as count FROM likes WHERE user_id = ?", (session['user_id'],))
+    liked = c.fetchone()[0]
+    db_execute(c, "SELECT COUNT(*) as count FROM saves WHERE user_id = ?", (session['user_id'],))
+    saved = c.fetchone()[0]
+    db_execute(c, "SELECT COUNT(*) as count FROM comments WHERE user_id = ?", (session['user_id'],))
+    comments = c.fetchone()[0]
     conn.close()
     return jsonify({"total_verses": total, "liked": liked, "saved": saved, "comments": comments})
 
@@ -581,12 +503,12 @@ def like_verse():
     verse_id = data.get('verse_id')
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id FROM likes WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
+    db_execute(c, "SELECT id FROM likes WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
     if c.fetchone():
-        c.execute("DELETE FROM likes WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
+        db_execute(c, "DELETE FROM likes WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
         liked = False
     else:
-        c.execute("INSERT INTO likes (user_id, verse_id, timestamp) VALUES (?, ?, ?)",
+        db_execute(c, "INSERT INTO likes (user_id, verse_id, timestamp) VALUES (?, ?, ?)",
                   (session['user_id'], verse_id, datetime.now().isoformat()))
         liked = True
     
@@ -607,12 +529,12 @@ def save_verse():
     verse_id = data.get('verse_id')
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id FROM saves WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
+    db_execute(c, "SELECT id FROM saves WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
     if c.fetchone():
-        c.execute("DELETE FROM saves WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
+        db_execute(c, "DELETE FROM saves WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
         saved = False
     else:
-        c.execute("INSERT INTO saves (user_id, verse_id, timestamp) VALUES (?, ?, ?)",
+        db_execute(c, "INSERT INTO saves (user_id, verse_id, timestamp) VALUES (?, ?, ?)",
                   (session['user_id'], verse_id, datetime.now().isoformat()))
         saved = True
     conn.commit()
@@ -626,27 +548,39 @@ def get_library():
     conn = get_db()
     c = conn.cursor()
     
-    c.execute("""
+    db_execute(c, """
         SELECT v.id, v.reference, v.text, v.translation, v.source, v.book, l.timestamp as liked_at
         FROM verses v 
         JOIN likes l ON v.id = l.verse_id 
         WHERE l.user_id = ? 
         ORDER BY l.timestamp DESC
     """, (session['user_id'],))
-    liked = [{"id": row['id'], "ref": row['reference'], "text": row['text'], "trans": row['translation'], 
-              "source": row['source'], "book": row['book'], "liked_at": row['liked_at'], "saved_at": None} for row in c.fetchall()]
+    liked = [{"id": row[0] if isinstance(row, tuple) else row['id'], 
+              "ref": row[1] if isinstance(row, tuple) else row['reference'], 
+              "text": row[2] if isinstance(row, tuple) else row['text'], 
+              "trans": row[3] if isinstance(row, tuple) else row['translation'], 
+              "source": row[4] if isinstance(row, tuple) else row['source'], 
+              "book": row[5] if isinstance(row, tuple) else row['book'], 
+              "liked_at": row[6] if isinstance(row, tuple) else row['liked_at'], 
+              "saved_at": None} for row in c.fetchall()]
     
-    c.execute("""
+    db_execute(c, """
         SELECT v.id, v.reference, v.text, v.translation, v.source, v.book, s.timestamp as saved_at
         FROM verses v 
         JOIN saves s ON v.id = s.verse_id 
         WHERE s.user_id = ? 
         ORDER BY s.timestamp DESC
     """, (session['user_id'],))
-    saved = [{"id": row['id'], "ref": row['reference'], "text": row['text'], "trans": row['translation'], 
-              "source": row['source'], "book": row['book'], "liked_at": None, "saved_at": row['saved_at']} for row in c.fetchall()]
+    saved = [{"id": row[0] if isinstance(row, tuple) else row['id'], 
+              "ref": row[1] if isinstance(row, tuple) else row['reference'], 
+              "text": row[2] if isinstance(row, tuple) else row['text'], 
+              "trans": row[3] if isinstance(row, tuple) else row['translation'], 
+              "source": row[4] if isinstance(row, tuple) else row['source'], 
+              "book": row[5] if isinstance(row, tuple) else row['book'], 
+              "liked_at": None, 
+              "saved_at": row[6] if isinstance(row, tuple) else row['saved_at']} for row in c.fetchall()]
     
-    c.execute("""
+    db_execute(c, """
         SELECT c.id, c.name, c.color, COUNT(vc.verse_id) as count 
         FROM collections c
         LEFT JOIN verse_collections vc ON c.id = vc.collection_id
@@ -656,15 +590,20 @@ def get_library():
     
     collections = []
     for row in c.fetchall():
-        c.execute("""
+        db_execute(c, """
             SELECT v.id, v.reference, v.text FROM verses v
             JOIN verse_collections vc ON v.id = vc.verse_id
             WHERE vc.collection_id = ?
-        """, (row['id'],))
-        verses = [{"id": v['id'], "ref": v['reference'], "text": v['text']} for v in c.fetchall()]
+        """, (row[0] if isinstance(row, tuple) else row['id'],))
+        verses = [{"id": v[0] if isinstance(v, tuple) else v['id'], 
+                   "ref": v[1] if isinstance(v, tuple) else v['reference'], 
+                   "text": v[2] if isinstance(v, tuple) else v['text']} for v in c.fetchall()]
         collections.append({
-            "id": row['id'], "name": row['name'], "color": row['color'], 
-            "count": row['count'], "verses": verses
+            "id": row[0] if isinstance(row, tuple) else row['id'], 
+            "name": row[1] if isinstance(row, tuple) else row['name'], 
+            "color": row[2] if isinstance(row, tuple) else row['color'], 
+            "count": row[3] if isinstance(row, tuple) else row['count'], 
+            "verses": verses
         })
     
     conn.close()
@@ -681,12 +620,12 @@ def add_to_collection():
     conn = get_db()
     c = conn.cursor()
     try:
-        c.execute("INSERT INTO verse_collections (collection_id, verse_id) VALUES (?, ?)",
+        db_execute(c, "INSERT INTO verse_collections (collection_id, verse_id) VALUES (?, ?)",
                   (collection_id, verse_id))
         conn.commit()
         conn.close()
         return jsonify({"success": True})
-    except sqlite3.IntegrityError:
+    except Exception:
         conn.close()
         return jsonify({"success": False, "error": "Already in collection"})
 
@@ -700,10 +639,10 @@ def create_collection():
     
     conn = get_db()
     c = conn.cursor()
-    c.execute("INSERT INTO collections (user_id, name, color, created_at) VALUES (?, ?, ?, ?)",
+    db_execute(c, "INSERT INTO collections (user_id, name, color, created_at) VALUES (?, ?, ?, ?)",
               (session['user_id'], name, color, datetime.now().isoformat()))
     conn.commit()
-    new_id = c.lastrowid
+    new_id = c.lastrowid if hasattr(c, 'lastrowid') else c.fetchone()[0]
     conn.close()
     return jsonify({"id": new_id, "name": name, "color": color, "count": 0, "verses": []})
 
@@ -716,14 +655,14 @@ def delete_collection():
     
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT user_id FROM collections WHERE id = ?", (collection_id,))
+    db_execute(c, "SELECT user_id FROM collections WHERE id = ?", (collection_id,))
     row = c.fetchone()
-    if not row or row['user_id'] != session['user_id']:
+    if not row or (row[0] if isinstance(row, tuple) else row['user_id']) != session['user_id']:
         conn.close()
         return jsonify({"error": "Unauthorized"}), 403
     
-    c.execute("DELETE FROM verse_collections WHERE collection_id = ?", (collection_id,))
-    c.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
+    db_execute(c, "DELETE FROM verse_collections WHERE collection_id = ?", (collection_id,))
+    db_execute(c, "DELETE FROM collections WHERE id = ?", (collection_id,))
     conn.commit()
     conn.close()
     return jsonify({"success": True})
@@ -734,7 +673,7 @@ def get_recommendations():
         return jsonify([])
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM likes WHERE user_id = ?", (session['user_id'],))
+    db_execute(c, "SELECT COUNT(*) FROM likes WHERE user_id = ?", (session['user_id'],))
     has_likes = c.fetchone()[0] > 0
     conn.close()
     
@@ -764,12 +703,12 @@ def get_comments(verse_id):
         ORDER BY c.timestamp DESC
     """, (verse_id,))
     comments = [{
-        "id": row['id'],
-        "text": row['text'],
-        "timestamp": row['timestamp'],
-        "user_name": row['name'],
-        "user_picture": row['picture'],
-        "user_id": row['user_id']
+        "id": row[0] if isinstance(row, tuple) else row['id'],
+        "text": row[3] if isinstance(row, tuple) else row['text'],
+        "timestamp": row[4] if isinstance(row, tuple) else row['timestamp'],
+        "user_name": row[7] if isinstance(row, tuple) else row['name'],
+        "user_picture": row[8] if isinstance(row, tuple) else row['picture'],
+        "user_id": row[1] if isinstance(row, tuple) else row['user_id']
     } for row in c.fetchall()]
     conn.close()
     return jsonify(comments)
@@ -787,23 +726,23 @@ def post_comment():
     
     conn = get_db()
     c = conn.cursor()
-    c.execute("INSERT INTO comments (user_id, verse_id, text, timestamp, google_name, google_picture) VALUES (?, ?, ?, ?, ?, ?)",
+    db_execute(c, "INSERT INTO comments (user_id, verse_id, text, timestamp, google_name, google_picture) VALUES (?, ?, ?, ?, ?, ?)",
               (session['user_id'], verse_id, text, datetime.now().isoformat(), 
                session.get('user_name'), session.get('user_picture')))
     conn.commit()
     
-    comment_id = c.lastrowid
-    c.execute("SELECT c.*, u.name, u.picture FROM comments c JOIN users u ON c.user_id = u.id WHERE c.id = ?", (comment_id,))
+    comment_id = c.lastrowid if hasattr(c, 'lastrowid') else c.fetchone()[0]
+    db_execute(c, "SELECT c.*, u.name, u.picture FROM comments c JOIN users u ON c.user_id = u.id WHERE c.id = ?", (comment_id,))
     row = c.fetchone()
     conn.close()
     
     return jsonify({
-        "id": row['id'],
-        "text": row['text'],
-        "timestamp": row['timestamp'],
-        "user_name": row['name'],
-        "user_picture": row['picture'],
-        "user_id": row['user_id']
+        "id": row[0] if isinstance(row, tuple) else row['id'],
+        "text": row[3] if isinstance(row, tuple) else row['text'],
+        "timestamp": row[4] if isinstance(row, tuple) else row['timestamp'],
+        "user_name": row[7] if isinstance(row, tuple) else row['name'],
+        "user_picture": row[8] if isinstance(row, tuple) else row['picture'],
+        "user_id": row[1] if isinstance(row, tuple) else row['user_id']
     })
 
 @app.route('/api/admin/delete_comment/<int:comment_id>', methods=['DELETE'])
@@ -816,7 +755,7 @@ def delete_comment(comment_id):
     
     conn = get_db()
     c = conn.cursor()
-    c.execute("DELETE FROM comments WHERE id = ?", (comment_id,))
+    db_execute(c, "DELETE FROM comments WHERE id = ?", (comment_id,))
     conn.commit()
     conn.close()
     
@@ -834,12 +773,12 @@ def get_community_messages():
         LIMIT 100
     """)
     messages = [{
-        "id": row['id'],
-        "text": row['text'],
-        "timestamp": row['timestamp'],
-        "user_name": row['name'],
-        "user_picture": row['picture'],
-        "user_id": row['user_id']
+        "id": row[0] if isinstance(row, tuple) else row['id'],
+        "text": row[2] if isinstance(row, tuple) else row['text'],
+        "timestamp": row[3] if isinstance(row, tuple) else row['timestamp'],
+        "user_name": row[6] if isinstance(row, tuple) else row['name'],
+        "user_picture": row[7] if isinstance(row, tuple) else row['picture'],
+        "user_id": row[1] if isinstance(row, tuple) else row['user_id']
     } for row in c.fetchall()]
     conn.close()
     return jsonify(messages)
@@ -856,23 +795,23 @@ def post_community_message():
     
     conn = get_db()
     c = conn.cursor()
-    c.execute("INSERT INTO community_messages (user_id, text, timestamp, google_name, google_picture) VALUES (?, ?, ?, ?, ?)",
+    db_execute(c, "INSERT INTO community_messages (user_id, text, timestamp, google_name, google_picture) VALUES (?, ?, ?, ?, ?)",
               (session['user_id'], text, datetime.now().isoformat(), 
                session.get('user_name'), session.get('user_picture')))
     conn.commit()
     
-    message_id = c.lastrowid
-    c.execute("SELECT m.*, u.name, u.picture FROM community_messages m JOIN users u ON m.user_id = u.id WHERE m.id = ?", (message_id,))
+    message_id = c.lastrowid if hasattr(c, 'lastrowid') else c.fetchone()[0]
+    db_execute(c, "SELECT m.*, u.name, u.picture FROM community_messages m JOIN users u ON m.user_id = u.id WHERE m.id = ?", (message_id,))
     row = c.fetchone()
     conn.close()
     
     return jsonify({
-        "id": row['id'],
-        "text": row['text'],
-        "timestamp": row['timestamp'],
-        "user_name": row['name'],
-        "user_picture": row['picture'],
-        "user_id": row['user_id']
+        "id": row[0] if isinstance(row, tuple) else row['id'],
+        "text": row[2] if isinstance(row, tuple) else row['text'],
+        "timestamp": row[3] if isinstance(row, tuple) else row['timestamp'],
+        "user_name": row[6] if isinstance(row, tuple) else row['name'],
+        "user_picture": row[7] if isinstance(row, tuple) else row['picture'],
+        "user_id": row[1] if isinstance(row, tuple) else row['user_id']
     })
 
 @app.route('/api/admin/delete_community/<int:message_id>', methods=['DELETE'])
@@ -885,7 +824,7 @@ def delete_community_message(message_id):
     
     conn = get_db()
     c = conn.cursor()
-    c.execute("DELETE FROM community_messages WHERE id = ?", (message_id,))
+    db_execute(c, "DELETE FROM community_messages WHERE id = ?", (message_id,))
     conn.commit()
     conn.close()
     
@@ -897,7 +836,7 @@ def check_like(verse_id):
         return jsonify({"liked": False})
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id FROM likes WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
+    db_execute(c, "SELECT id FROM likes WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
     liked = c.fetchone() is not None
     conn.close()
     return jsonify({"liked": liked})
@@ -908,37 +847,30 @@ def check_save(verse_id):
         return jsonify({"saved": False})
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id FROM saves WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
+    db_execute(c, "SELECT id FROM saves WHERE user_id = ? AND verse_id = ?", (session['user_id'], verse_id))
     saved = c.fetchone() is not None
     conn.close()
     return jsonify({"saved": saved})
 
-# This section only runs for local development
 if __name__ == '__main__':
     print("\n" + "="*70)
     print("BIBLE AI - DESKTOP & MOBILE EDITION")
     print("="*70)
     
-    # Only use ngrok for local development (not on Render)
     try:
         from pyngrok import ngrok, conf
-        conf.get_default().auth_token = NGROK_AUTHTOKEN
-        public_url = ngrok.connect(5000, bind_tls=True, domain=STATIC_DOMAIN)
+        conf.get_default().auth_token = "39RM1j4eX4gSd3EornIUrB4JscD_2zi2uH4gtx5jTmJE67Tuw"
+        public_url = ngrok.connect(5000, bind_tls=True, domain="noncompressive-nonpolitically-richie.ngrok-free.dev")
         print(f"\n{'='*70}")
-        print(f"LIVE AT: {PUBLIC_URL}")
+        print(f"LIVE AT: {public_url}")
         print(f"{'='*70}")
         import webbrowser
-        webbrowser.open(PUBLIC_URL)
+        webbrowser.open(str(public_url))
     except ImportError:
         print("Running without ngrok (local mode)")
-        print(f"Open http://localhost:5000")
+        print("Open http://localhost:5000")
     except Exception as e:
         print(f"Error: {e}")
-        print(f"Open http://localhost:5000")
+        print("Open http://localhost:5000")
     
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)
-
-
-
-
-
