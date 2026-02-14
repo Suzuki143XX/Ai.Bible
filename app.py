@@ -1084,6 +1084,15 @@ def get_library():
             """, (session['user_id'],))
             saved = [{"id": row['id'], "ref": row['reference'], "text": row['text'], "trans": row['translation'], 
                       "source": row['source'], "book": row['book'], "liked_at": None, "saved_at": row['saved_at']} for row in c.fetchall()]
+            
+            # GET COLLECTIONS - This was missing!
+            c.execute("""
+                SELECT c.id, c.name, c.color, COUNT(vc.verse_id) as count 
+                FROM collections c
+                LEFT JOIN verse_collections vc ON c.id = vc.collection_id
+                WHERE c.user_id = %s
+                GROUP BY c.id
+            """, (session['user_id'],))
         else:
             c.execute("""
                 SELECT v.id, v.reference, v.text, v.translation, v.source, v.book, l.timestamp as liked_at
@@ -1104,14 +1113,140 @@ def get_library():
             """, (session['user_id'],))
             saved = [{"id": row[0], "ref": row[1], "text": row[2], "trans": row[3], 
                       "source": row[4], "book": row[6], "liked_at": None, "saved_at": row[7]} for row in c.fetchall()]
+            
+            # GET COLLECTIONS - This was missing!
+            c.execute("""
+                SELECT c.id, c.name, c.color, COUNT(vc.verse_id) as count 
+                FROM collections c
+                LEFT JOIN verse_collections vc ON c.id = vc.collection_id
+                WHERE c.user_id = ?
+                GROUP BY c.id
+            """, (session['user_id'],))
         
-        return jsonify({"liked": liked, "saved": saved, "collections": []})
+        # Build collections list with verses
+        collections = []
+        for row in c.fetchall():
+            col_id = row['id'] if isinstance(row, dict) else row[0]
+            col_name = row['name'] if isinstance(row, dict) else row[1]
+            col_color = row['color'] if isinstance(row, dict) else row[2]
+            col_count = row['count'] if isinstance(row, dict) else row[3]
+            
+            if db_type == 'postgres':
+                c.execute("""
+                    SELECT v.id, v.reference, v.text FROM verses v
+                    JOIN verse_collections vc ON v.id = vc.verse_id
+                    WHERE vc.collection_id = %s
+                """, (col_id,))
+            else:
+                c.execute("""
+                    SELECT v.id, v.reference, v.text FROM verses v
+                    JOIN verse_collections vc ON v.id = vc.verse_id
+                    WHERE vc.collection_id = ?
+                """, (col_id,))
+            
+            if db_type == 'postgres':
+                verses = [{"id": v['id'], "ref": v['reference'], "text": v['text']} for v in c.fetchall()]
+            else:
+                verses = [{"id": v[0], "ref": v[1], "text": v[2]} for v in c.fetchall()]
+            
+            collections.append({
+                "id": col_id, "name": col_name, "color": col_color, 
+                "count": col_count, "verses": verses
+            })
+        
+        return jsonify({"liked": liked, "saved": saved, "collections": collections})
     except Exception as e:
         logger.error(f"Library error: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
 
+@app.route('/api/collections/add', methods=['POST'])
+def add_to_collection():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    is_banned, _, _ = check_ban_status(session['user_id'])
+    if is_banned:
+        return jsonify({"error": "banned"}), 403
+    
+    data = request.get_json()
+    collection_id = data.get('collection_id')
+    verse_id = data.get('verse_id')
+    
+    if not collection_id or not verse_id:
+        return jsonify({"success": False, "error": "Missing collection_id or verse_id"}), 400
+    
+    conn, db_type = get_db()
+    c = get_cursor(conn, db_type)
+    
+    try:
+        # Verify collection belongs to user
+        if db_type == 'postgres':
+            c.execute("SELECT user_id FROM collections WHERE id = %s", (collection_id,))
+        else:
+            c.execute("SELECT user_id FROM collections WHERE id = ?", (collection_id,))
+        
+        row = c.fetchone()
+        if not row:
+            return jsonify({"success": False, "error": "Collection not found"}), 404
+        
+        owner_id = row['user_id'] if isinstance(row, dict) else row[0]
+        if owner_id != session['user_id']:
+            return jsonify({"success": False, "error": "Not your collection"}), 403
+        
+        # Add verse to collection
+        if db_type == 'postgres':
+            c.execute("INSERT INTO verse_collections (collection_id, verse_id) VALUES (%s, %s)",
+                      (collection_id, verse_id))
+        else:
+            c.execute("INSERT INTO verse_collections (collection_id, verse_id) VALUES (?, ?)",
+                      (collection_id, verse_id))
+        conn.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        logger.error(f"Add to collection error: {e}")
+        # Likely already exists
+        return jsonify({"success": False, "error": "Already in collection or database error"})
+    finally:
+        conn.close()
+
+@app.route('/api/collections/create', methods=['POST'])
+def create_collection():
+    if 'user_id' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    is_banned, _, _ = check_ban_status(session['user_id'])
+    if is_banned:
+        return jsonify({"error": "banned"}), 403
+    
+    data = request.get_json()
+    name = data.get('name')
+    color = data.get('color', '#0A84FF')
+    
+    if not name:
+        return jsonify({"error": "Name required"}), 400
+    
+    conn, db_type = get_db()
+    c = get_cursor(conn, db_type)
+    
+    try:
+        if db_type == 'postgres':
+            c.execute("INSERT INTO collections (user_id, name, color, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
+                      (session['user_id'], name, color, datetime.now().isoformat()))
+            new_id = c.fetchone()['id']
+        else:
+            c.execute("INSERT INTO collections (user_id, name, color, created_at) VALUES (?, ?, ?, ?)",
+                      (session['user_id'], name, color, datetime.now().isoformat()))
+            new_id = c.lastrowid
+        
+        conn.commit()
+        return jsonify({"id": new_id, "name": name, "color": color, "count": 0, "verses": []})
+    except Exception as e:
+        logger.error(f"Create collection error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
 @app.route('/api/recommendations')
 def get_recommendations():
     if 'user_id' not in session:
@@ -1350,3 +1485,4 @@ def check_save(verse_id):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
