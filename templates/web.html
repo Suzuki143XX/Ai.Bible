@@ -1576,13 +1576,7 @@
                         <div class="stat-value" id="statComments" style="color: var(--success);">0</div>
                         <div class="stat-label">Comments</div>
                     </div>
-                </div><!-- Ban Status Display -->
-<div id="banStatus" style="display: none; background: linear-gradient(135deg, #ff416c, #ff4b2b); border-radius: 16px; padding: 24px; margin: 20px 0; text-align: center; color: white; box-shadow: 0 8px 32px rgba(255, 65, 108, 0.3);">
-    <div style="font-size: 48px; margin-bottom: 12px;">🚫</div>
-    <div style="font-size: 20px; font-weight: 700; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;">Account Suspended</div>
-    <div id="banReason" style="font-size: 14px; opacity: 0.9; margin-bottom: 12px;"></div>
-    <div id="banTimer" style="font-size: 18px; font-weight: 600; background: rgba(255,255,255,0.2); padding: 12px 24px; border-radius: 12px; display: inline-block;"></div>
-</div>
+                </div>
 
                 <button class="gen-btn" style="background: var(--danger);" onclick="logout()">
                     Log Out
@@ -1644,49 +1638,14 @@
             </div>
 
             <div class="setting-item">
-    <div>
-        <div class="setting-label">Dark Mode</div>
-        <div class="setting-desc">Use dark color scheme</div>
-    </div>
-    <div class="toggle active" id="darkToggle" onclick="toggleTheme()">
-        <div class="toggle-thumb"></div>
-    </div>
-</div>
-
-
-            <!-- ADMIN: Refresh Interval Setting -->
-            <div class="setting-item">
-                <div style="flex: 1;">
-                    <div class="setting-label">
-                        Verse Refresh Interval
-                        {% if not user.is_admin %}
-                        <span style="color: #FFD700; font-size: 11px; margin-left: 8px;">🔒 ADMIN ONLY</span>
-                        {% endif %}
-                    </div>
-                    <div class="setting-desc">How often to fetch new verse (30s - 1hr)</div>
-                    
-                    {% if not user.is_admin %}
-                    <!-- Admin verification for non-admins -->
-                    <div id="admin-verify-box" style="margin-top: 10px; padding: 12px; background: rgba(10,132,255,0.1); border-radius: 8px; border: 1px solid rgba(10,132,255,0.3);">
-                        <input type="password" id="adminCode" placeholder="Enter admin code" style="padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.3); color: white; width: 150px; font-size: 13px;">
-                        <button onclick="verifyAdmin()" style="padding: 8px 16px; background: #0A84FF; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; margin-left: 8px;">Unlock</button>
-                        <div id="adminMsg" style="margin-top: 8px; font-size: 12px; min-height: 16px;"></div>
-                    </div>
-                    {% endif %}
-                    
-                    <select id="intervalSelect" onchange="changeInterval(this.value)" 
-                            {% if not user.is_admin %}disabled{% endif %}
-                            style="margin-top: 10px; padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,{% if user.is_admin %}0.3{% else %}0.1{% endif %}); background: {% if user.is_admin %}rgba(0,0,0,0.3){% else %}rgba(255,255,255,0.05){% endif %}; color: white; font-size: 14px; cursor: {% if user.is_admin %}pointer{% else %}not-allowed{% endif %}; opacity: {% if user.is_admin %}1{% else %}0.5{% endif %};">
-                        <option value="30">30 seconds</option>
-                        <option value="60">1 minute</option>
-                        <option value="300">5 minutes</option>
-                        <option value="600">10 minutes</option>
-                        <option value="1800">30 minutes</option>
-                        <option value="3600">1 hour</option>
-                    </select>
-                    <div id="intervalMsg" style="margin-top: 8px; font-size: 13px; min-height: 18px;"></div>
+                <div>
+                    <div class="setting-label">Dark Mode</div>
+                    <div class="setting-desc">Use dark color scheme</div>
                 </div>
-            </div><!-- ADD THE NEW CODE HERE, RIGHT BEFORE THE NEXT </div> that closes modal-content -->
+                <div class="toggle active" id="darkToggle" onclick="toggleTheme()">
+                    <div class="toggle-thumb"></div>
+                </div>
+            </div>
 
             <div class="setting-item">
                 <div>
@@ -1788,36 +1747,6 @@
     <!-- Toast -->
     <div class="toast" id="toast"></div>
 
-    function checkBanStatus() {
-    fetch('/api/ban_status')
-        .then(r => r.json())
-        .then(data => {
-            if (data.is_banned) {
-                const banDiv = document.getElementById('banStatus');
-                const reasonDiv = document.getElementById('banReason');
-                const timerDiv = document.getElementById('banTimer');
-                
-                if (banDiv) {
-                    banDiv.style.display = 'block';
-                    reasonDiv.textContent = data.reason ? 'Reason: ' + data.reason : 'Reason: Violation';
-                    
-                    if (data.time_remaining && data.time_remaining !== 'Expired') {
-                        timerDiv.textContent = 'Banned for: ' + data.time_remaining;
-                    } else if (data.expires) {
-                        timerDiv.textContent = 'Until: ' + new Date(data.expires).toLocaleString();
-                    } else {
-                        timerDiv.textContent = 'Permanent Ban';
-                    }
-                }
-            }
-        })
-        .catch(e => console.error('Ban check error:', e));
-}
-
-// Call when profile is shown
-if (document.getElementById('banStatus')) {
-    checkBanStatus();
-}
     <script>
         // State
         let currentVerse = null;
@@ -1854,23 +1783,16 @@ if (document.getElementById('banStatus')) {
 
         // Initialize
         async function init() {
-    loadSettings();
-    initPermanentTimer();
-    fetchVerse();
-    verseCheckInterval = setInterval(fetchVerse, 1000);
-    checkAdminStatus();
-    initSettings(); // NEW: Check admin for interval setting
-    initDragAndDrop(); // NEW: Setup drag and drop
-    
-    // Setup textarea auto-resize
-    setupTextarea('commentInput');
-    setupTextarea('communityInput');
-    
-    // Safe ban check only on profile page
-    if (document.getElementById('banStatus')) {
-        checkBanStatus();
-    }
-}
+            loadSettings();
+            initPermanentTimer();
+            fetchVerse();
+            verseCheckInterval = setInterval(fetchVerse, 1000);
+            checkAdminStatus();
+            
+            // Setup textarea auto-resize
+            setupTextarea('commentInput');
+            setupTextarea('communityInput');
+        }
 
         function setupTextarea(id) {
             const el = document.getElementById(id);
@@ -1912,8 +1834,6 @@ if (document.getElementById('banStatus')) {
             updateTimeOnSite();
             timerInterval = setInterval(updateTimeOnSite, 1000);
         }
-
-    
 
         function updateTimeOnSite() {
             const now = Date.now();
@@ -2789,248 +2709,6 @@ if (document.getElementById('banStatus')) {
 
         // Start
         init();
-    // ===== FIXED FUNCTIONS =====
-
-// 1. FIXED Settings - Only show admin interval to admins
-async function initSettings() {
-    try {
-        const res = await fetch('/api/user_info');
-        const data = await res.json();
-        
-        const adminSection = document.getElementById('adminIntervalSection');
-        if (adminSection && data.is_admin) {
-            adminSection.style.display = 'flex';
-            adminSection.style.justifyContent = 'space-between';
-            adminSection.style.alignItems = 'center';
-        }
-    } catch (e) {
-        console.error('Settings init error:', e);
-    }
-}
-
-// 2. FIXED Ban Check - Safe element access
-async function checkBanStatus() {
-    try {
-        const res = await fetch('/api/ban_status');
-        const data = await res.json();
-        
-        if (data.is_banned) {
-            const banDiv = document.getElementById('banStatus');
-            const reasonDiv = document.getElementById('banReason');
-            const timerDiv = document.getElementById('banTimer');
-            
-            if (banDiv) {
-                banDiv.style.display = 'block';
-                if (reasonDiv) {
-                    reasonDiv.textContent = data.reason ? 'Reason: ' + data.reason : 'Reason: Violation';
-                }
-                if (timerDiv) {
-                    if (data.time_remaining && data.time_remaining !== 'Expired') {
-                        timerDiv.textContent = 'Banned for: ' + data.time_remaining;
-                    } else if (data.expires) {
-                        timerDiv.textContent = 'Until: ' + new Date(data.expires).toLocaleString();
-                    } else {
-                        timerDiv.textContent = 'Permanent Ban';
-                    }
-                }
-            }
-            
-            setTimeout(() => {
-                window.location.href = '/logout';
-            }, 5000);
-        }
-    } catch (e) {
-        console.error('Ban check error:', e);
-    }
-}
-
-// 3. FIXED Recommendation System
-let currentRecommendation = null;
-
-async function loadRecommendation() {
-    try {
-        const response = await fetch('/api/recommendation');
-        const data = await response.json();
-        
-        const container = document.getElementById('recList');
-        if (!container) return;
-        
-        if (data.success && data.verse) {
-            currentRecommendation = data.verse;
-            container.innerHTML = `
-                <div class="rec-card" style="background: linear-gradient(135deg, rgba(10, 132, 255, 0.15), rgba(191, 90, 242, 0.15)); border: 1px solid rgba(10, 132, 255, 0.3); border-radius: 16px; padding: 20px; margin-bottom: 12px; animation: slideIn 0.35s ease-out;">
-                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--primary);">
-                        <span>✨</span>
-                        <span>${data.verse.reason || 'Recommended'}</span>
-                    </div>
-                    <div style="font-size: 15px; line-height: 1.5; margin-bottom: 10px;">${data.verse.text}</div>
-                    <div style="font-size: 13px; opacity: 0.7; font-weight: 600; margin-bottom: 12px;">${data.verse.ref}</div>
-                    <div style="display: flex; gap: 8px;">
-                        <button class="verse-card-btn" onclick="likeRecommendation()" style="flex: 1;">♡ Like</button>
-                        <button class="verse-card-btn" onclick="saveRecommendation()" style="flex: 1;">🔖 Save</button>
-                    </div>
-                </div>
-            `;
-        } else {
-            container.innerHTML = `
-                <div class="empty-state" style="text-align: center; padding: 40px 20px; color: var(--text-tertiary);">
-                    <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;">✨</div>
-                    <p>Like some verses to get personalized recommendations!</p>
-                    <button onclick="generateNewRecommendation()" class="gen-btn" style="margin-top: 16px;">Generate Recommendation</button>
-                </div>
-            `;
-        }
-    } catch (e) {
-        console.error('Rec error:', e);
-    }
-}
-
-async function generateNewRecommendation() {
-    const btn = document.querySelector('.gen-btn');
-    if (btn) btn.innerHTML = '⏳ Loading...';
-    await loadRecommendation();
-}
-
-async function likeRecommendation() {
-    if (!currentRecommendation) return;
-    try {
-        await fetch('/api/like', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({verse_id: currentRecommendation.id})
-        });
-        showToast('Liked! Loading next...');
-        setTimeout(loadRecommendation, 500);
-    } catch (e) {
-        console.error(e);
-    }
-}
-
-async function saveRecommendation() {
-    if (!currentRecommendation) return;
-    try {
-        await fetch('/api/save', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({verse_id: currentRecommendation.id})
-        });
-        showToast('Saved!');
-    } catch (e) {
-        console.error(e);
-    }
-}
-
-// 4. FIXED Drag and Drop
-let draggedVerseData = null;
-
-function initDragAndDrop() {
-    setupLibraryDragHandlers();
-    
-    const favoritesZone = document.getElementById('favoritesDropZone');
-    if (favoritesZone) {
-        favoritesZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            favoritesZone.classList.add('drag-over');
-        });
-        
-        favoritesZone.addEventListener('dragleave', () => {
-            favoritesZone.classList.remove('drag-over');
-        });
-        
-        favoritesZone.addEventListener('drop', async (e) => {
-            e.preventDefault();
-            favoritesZone.classList.remove('drag-over');
-            
-            const verseId = e.dataTransfer.getData('text/plain');
-            if (verseId) {
-                await addToFavorites(verseId);
-            }
-        });
-    }
-}
-
-function setupLibraryDragHandlers() {
-    document.querySelectorAll('.verse-card').forEach(card => {
-        card.draggable = true;
-        
-        card.addEventListener('dragstart', (e) => {
-            const verseId = card.dataset.verseId;
-            e.dataTransfer.setData('text/plain', verseId);
-            e.dataTransfer.effectAllowed = 'copy';
-            card.classList.add('dragging');
-            draggedVerseData = verseId;
-        });
-        
-        card.addEventListener('dragend', () => {
-            card.classList.remove('dragging');
-            draggedVerseData = null;
-        });
-    });
-}
-
-async function addToFavorites(verseId) {
-    try {
-        let collectionId = null;
-        const collectionsRes = await fetch('/api/library');
-        const libraryData = await collectionsRes.json();
-        
-        const favCollection = libraryData.collections?.find(c => c.name === 'Favorites');
-        
-        if (favCollection) {
-            collectionId = favCollection.id;
-        } else {
-            const createRes = await fetch('/api/collections/create', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({name: 'Favorites', color: '#FF375F'})
-            });
-            const createData = await createRes.json();
-            collectionId = createData.id;
-        }
-        
-        const res = await fetch('/api/collections/add', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({collection_id: collectionId, verse_id: parseInt(verseId)})
-        });
-        
-        const data = await res.json();
-        if (data.success) {
-            showToast('Added to Favorites! ❤️');
-            loadLibrary();
-        } else {
-            showToast(data.message || 'Already in favorites');
-        }
-    } catch (e) {
-        console.error('Add to favorites error:', e);
-        showToast('Error adding favorite');
-    }
-}
-
-// 5. Helper function for updating interval
-async function changeInterval(seconds) {
-    try {
-        const res = await fetch('/api/set_interval', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({interval: parseInt(seconds)})
-        });
-        const data = await res.json();
-        
-        if (data.success) {
-            showToast(`Interval set to ${seconds}s`);
-            settings.interval = parseInt(seconds);
-            saveSettings();
-        } else {
-            showToast(data.error || 'Failed to update');
-        }
-    } catch (e) {
-        console.error(e);
-        showToast('Error updating interval');
-    }
-}
-</script>
+    </script>
 </body>
-
 </html>
-
