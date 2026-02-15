@@ -1482,6 +1482,15 @@ def check_save(verse_id):
     finally:
         conn.close()
 
+# Import and register admin blueprint
+from admin_routes import admin_bp
+app.register_blueprint(admin_bp)
+
+# Make sure templates folder includes admin templates
+import os
+template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
+app.template_folder = template_dir
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
