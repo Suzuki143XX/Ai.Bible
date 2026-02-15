@@ -7,7 +7,7 @@ from functools import wraps
 from datetime import datetime, timedelta
 import json
 import logging
-from app import get_db, get_cursor, ADMIN_CODE, MASTER_PASSWORD, IS_POSTGRES, HAS_BAN_COLUMNS, check_column_exists as app_check_column, log_action
+from app import get_db, get_cursor, ADMIN_CODE, MASTER_PASSWORD, IS_POSTGRES, HAS_BAN_COLUMNS, check_column_exists_app as app_check_column, log_action
 
 logger = logging.getLogger(__name__)
 
@@ -676,3 +676,4 @@ def check_admin():
         "logged_in": True,
         "role": session.get('role', 'user')
     })
+
