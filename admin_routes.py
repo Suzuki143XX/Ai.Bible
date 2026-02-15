@@ -7,7 +7,7 @@ from functools import wraps
 from datetime import datetime, timedelta
 import json
 import logging
-from app import get_db, get_cursor, ADMIN_CODE, MASTER_PASSWORD, IS_POSTGRES
+from app import get_db, get_cursor, ADMIN_CODE, MASTER_PASSWORD, IS_POSTGRES, HAS_BAN_COLUMNS, check_column_exists as app_check_column, log_action
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +49,14 @@ def check_column_exists(conn, db_type, table, column):
                 FROM information_schema.columns 
                 WHERE table_name = %s AND column_name = %s
             """, (table, column))
+            result = c.fetchone()
+            return result is not None
         else:
             c.execute(f"PRAGMA table_info({table})")
             columns = [col[1] for col in c.fetchall()]
             return column in columns
-        return c.fetchone() is not None
-    except:
+    except Exception as e:
+        logger.error(f"Column check error: {e}")
         return False
 
 # ============ ADMIN AUTH ============
@@ -97,16 +99,20 @@ def admin_dashboard():
     try:
         # Basic stats that always work
         c.execute("SELECT COUNT(*) as count FROM users")
-        stats['total_users'] = c.fetchone()['count'] if db_type == 'postgres' else c.fetchone()[0]
+        result = c.fetchone()
+        stats['total_users'] = result['count'] if isinstance(result, dict) else result[0]
         
         c.execute("SELECT COUNT(*) as count FROM verses")
-        stats['total_verses'] = c.fetchone()['count'] if db_type == 'postgres' else c.fetchone()[0]
+        result = c.fetchone()
+        stats['total_verses'] = result['count'] if isinstance(result, dict) else result[0]
         
         c.execute("SELECT COUNT(*) as count FROM likes")
-        stats['total_likes'] = c.fetchone()['count'] if db_type == 'postgres' else c.fetchone()[0]
+        result = c.fetchone()
+        stats['total_likes'] = result['count'] if isinstance(result, dict) else result[0]
         
         c.execute("SELECT COUNT(*) as count FROM saves")
-        stats['total_saves'] = c.fetchone()['count'] if db_type == 'postgres' else c.fetchone()[0]
+        result = c.fetchone()
+        stats['total_saves'] = result['count'] if isinstance(result, dict) else result[0]
         
         # Check if is_banned exists
         has_banned = check_column_exists(conn, db_type, 'users', 'is_banned')
@@ -116,7 +122,8 @@ def admin_dashboard():
                 c.execute("SELECT COUNT(*) as count FROM users WHERE is_banned = TRUE")
             else:
                 c.execute("SELECT COUNT(*) as count FROM users WHERE is_banned = 1")
-            stats['banned_users'] = c.fetchone()['count'] if db_type == 'postgres' else c.fetchone()[0]
+            result = c.fetchone()
+            stats['banned_users'] = result['count'] if isinstance(result, dict) else result[0]
         else:
             stats['banned_users'] = 0
         
@@ -216,10 +223,7 @@ def api_users():
         elif sort == 'name':
             query += " ORDER BY name ASC"
         
-        if db_type == 'postgres':
-            c.execute(query, params)
-        else:
-            c.execute(query, params)
+        c.execute(query, params)
         
         rows = c.fetchall()
         users = []
@@ -254,11 +258,16 @@ def api_users():
             try:
                 if db_type == 'postgres':
                     c.execute("SELECT COUNT(*) FROM likes WHERE user_id = %s", (user['id'],))
-                    user['likes_count'] = c.fetchone()['count']
+                    result = c.fetchone()
+                    user['likes_count'] = result['count'] if isinstance(result, dict) else result[0]
+                    
                     c.execute("SELECT COUNT(*) FROM saves WHERE user_id = %s", (user['id'],))
-                    user['saves_count'] = c.fetchone()['count']
+                    result = c.fetchone()
+                    user['saves_count'] = result['count'] if isinstance(result, dict) else result[0]
+                    
                     c.execute("SELECT COUNT(*) FROM comments WHERE user_id = %s", (user['id'],))
-                    user['comments_count'] = c.fetchone()['count']
+                    result = c.fetchone()
+                    user['comments_count'] = result['count'] if isinstance(result, dict) else result[0]
                 else:
                     c.execute("SELECT COUNT(*) FROM likes WHERE user_id = ?", (user['id'],))
                     user['likes_count'] = c.fetchone()[0]
@@ -402,6 +411,112 @@ def admin_user_details(user_id):
                              audit_history=audit_history)
     except Exception as e:
         logger.error(f"User details error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+# ============ BAN/UNBAN API ENDPOINTS (MISSING!) ============
+
+@admin_bp.route('/api/users/<int:user_id>/ban', methods=['POST'])
+@admin_required
+def ban_user(user_id):
+    """Ban a user"""
+    data = request.get_json() or {}
+    reason = data.get('reason', 'No reason provided')
+    duration_hours = data.get('duration_hours')
+    
+    conn, db_type = get_db()
+    c = get_cursor(conn, db_type)
+    
+    try:
+        # Check if ban columns exist
+        has_banned = check_column_exists(conn, db_type, 'users', 'is_banned')
+        has_ban_reason = check_column_exists(conn, db_type, 'users', 'ban_reason')
+        has_ban_expires = check_column_exists(conn, db_type, 'users', 'ban_expires_at')
+        
+        if not has_banned:
+            return jsonify({"error": "Ban system not initialized - columns missing"}), 500
+        
+        # Calculate expiration
+        expires_at = None
+        if duration_hours:
+            expires_at = (datetime.now() + timedelta(hours=int(duration_hours))).isoformat()
+        
+        # Build update query dynamically based on available columns
+        updates = ["is_banned = TRUE" if db_type == 'postgres' else "is_banned = 1"]
+        params = []
+        
+        if has_ban_reason:
+            updates.append("ban_reason = %s" if db_type == 'postgres' else "ban_reason = ?")
+            params.append(reason)
+        
+        if has_ban_expires and expires_at:
+            updates.append("ban_expires_at = %s" if db_type == 'postgres' else "ban_expires_at = ?")
+            params.append(expires_at)
+        
+        query = f"UPDATE users SET {', '.join(updates)} WHERE id = {'%s' if db_type == 'postgres' else '?'}"
+        params.append(user_id)
+        
+        c.execute(query, params)
+        conn.commit()
+        
+        # Log the action
+        try:
+            log_action(session.get('user_id'), 'ban_user', user_id, {
+                'reason': reason,
+                'duration_hours': duration_hours,
+                'expires_at': expires_at
+            })
+        except:
+            pass
+        
+        return jsonify({
+            "success": True, 
+            "message": "User banned successfully",
+            "reason": reason,
+            "expires_at": expires_at
+        })
+        
+    except Exception as e:
+        logger.error(f"Ban user error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+@admin_bp.route('/api/users/<int:user_id>/unban', methods=['POST'])
+@admin_required
+def unban_user(user_id):
+    """Unban a user"""
+    conn, db_type = get_db()
+    c = get_cursor(conn, db_type)
+    
+    try:
+        has_banned = check_column_exists(conn, db_type, 'users', 'is_banned')
+        if not has_banned:
+            return jsonify({"error": "Ban system not initialized"}), 500
+        
+        # Build update query
+        updates = ["is_banned = FALSE" if db_type == 'postgres' else "is_banned = 0"]
+        
+        if check_column_exists(conn, db_type, 'users', 'ban_reason'):
+            updates.append("ban_reason = NULL")
+        if check_column_exists(conn, db_type, 'users', 'ban_expires_at'):
+            updates.append("ban_expires_at = NULL")
+        
+        query = f"UPDATE users SET {', '.join(updates)} WHERE id = {'%s' if db_type == 'postgres' else '?'}"
+        c.execute(query, (user_id,))
+        conn.commit()
+        
+        # Log the action
+        try:
+            log_action(session.get('user_id'), 'unban_user', user_id, {})
+        except:
+            pass
+        
+        return jsonify({"success": True, "message": "User unbanned successfully"})
+        
+    except Exception as e:
+        logger.error(f"Unban user error: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
