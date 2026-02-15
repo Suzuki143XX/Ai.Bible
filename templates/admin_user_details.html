@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ user.name }} | User Details | Bible AI Admin</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0a0a0f;
+            color: #fff;
+            min-height: 100vh;
+        }
+        
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 260px;
+            height: 100vh;
+            background: rgba(255, 255, 255, 0.03);
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 30px 20px;
+            overflow-y: auto;
+        }
+        
+        .sidebar-header {
+            padding-bottom: 30px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 30px;
+        }
+        
+        .sidebar-header h1 {
+            font-size: 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            color: #aaa;
+            text-decoration: none;
+            border-radius: 10px;
+            margin-bottom: 8px;
+            transition: all 0.3s ease;
+        }
+        
+        .nav-item:hover, .nav-item.active {
+            background: rgba(102, 126, 234, 0.1);
+            color: #fff;
+        }
+        
+        .main-content {
+            margin-left: 260px;
+            padding: 40px;
+        }
+        
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: #667eea;
+            text-decoration: none;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        
+        .profile-header {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 40px;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 30px;
+        }
+        
+        .profile-avatar {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+            font-weight: 600;
+        }
+        
+        .profile-avatar img {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+        
+        .profile-info h1 {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
+        
+        .profile-info p {
+            color: #888;
+            font-size: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .profile-meta {
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+        
+        .meta-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .badge {
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .badge-admin { background: rgba(102, 126, 234, 0.2); color: #667eea; }
+        .badge-user { background: rgba(52, 199, 89, 0.2); color: #34c759; }
+        .badge-banned { background: rgba(255, 59, 48, 0.2); color: #ff3b30; }
+        
+        .profile-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 12px;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+        }
+        
+        .btn-danger {
+            background: rgba(255, 59, 48, 0.2);
+            color: #ff3b30;
+            border: 1px solid rgba(255, 59, 48, 0.3);
+        }
+        
+        .btn-success {
+            background: rgba(52, 199, 89, 0.2);
+            color: #34c759;
+            border: 1px solid rgba(52, 199, 89, 0.3);
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 30px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 20px;
+        }
+        
+        .tab {
+            padding: 12px 24px;
+            background: rgba(255, 255, 255, 0.05);
+            border: none;
+            border-radius: 10px;
+            color: #aaa;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .tab:hover, .tab.active {
+            background: rgba(102, 126, 234, 0.2);
+            color: #fff;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .content-section {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        
+        .content-section h3 {
+            font-size: 18px;
+            margin-bottom: 20px;
+            color: #888;
+        }
+        
+        .item-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        
+        .item {
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .item-ref {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 8px;
+        }
+        
+        .item-text {
+            color: #ccc;
+            line-height: 1.6;
+            margin-bottom: 8px;
+        }
+        
+        .item-time {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px;
+            color: #666;
+        }
+        
+        .audit-log {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .audit-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: rgba(102, 126, 234, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .audit-details {
+            flex: 1;
+        }
+        
+        .audit-action {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        
+        .audit-meta {
+            font-size: 13px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h1>⚡ Bible AI Admin</h1>
+        </div>
+        <nav>
+            <a href="/admin/dashboard" class="nav-item">Dashboard</a>
+            <a href="/admin/users" class="nav-item active">Users</a>
+            <a href="/admin/content" class="nav-item">Content</a>
+            <a href="/admin/audit" class="nav-item">Audit Logs</a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <a href="/admin/users" class="back-link">← Back to Users</a>
+        
+        <div class="profile-header">
+            <div class="profile-avatar">
+                {% if user.picture %}
+                <img src="{{ user.picture }}" alt="">
+                {% else %}
+                {{ user.name[0] }}
+                {% endif %}
+            </div>
+            
+            <div class="profile-info">
+                <h1>{{ user.name }}</h1>
+                <p>{{ user.email }}</p>
+                <div class="profile-meta">
+                    <span class="meta-item">🆔 ID: {{ user.id }}</span>
+                    <span class="meta-item">📅 Joined: {{ user.created_at }}</span>
+                    <span class="badge badge-{{ 'banned' if user.is_banned else user.role }}">
+                        {{ 'Banned' if user.is_banned else user.role }}
+                    </span>
+                </div>
+                {% if user.is_banned and user.ban_reason %}
+                <div style="margin-top: 16px; padding: 12px; background: rgba(255, 59, 48, 0.1); border-radius: 8px; color: #ff3b30;">
+                    <strong>Ban Reason:</strong> {{ user.ban_reason }}
+                </div>
+                {% endif %}
+            </div>
+            
+            <div class="profile-actions">
+                {% if user.is_banned %}
+                <button class="btn btn-success" onclick="unbanUser({{ user.id }})">Unban User</button>
+                {% else %}
+                <button class="btn btn-danger" onclick="banUser({{ user.id }})">Ban User</button>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('likes')">❤️ Likes ({{ likes|length }})</button>
+            <button class="tab" onclick="showTab('saves')">🔖 Saves ({{ saves|length }})</button>
+            <button class="tab" onclick="showTab('comments')">💬 Comments ({{ comments|length }})</button>
+            <button class="tab" onclick="showTab('audit')">📋 Audit History</button>
+        </div>
+
+        <div id="likes" class="tab-content active">
+            <div class="content-section">
+                <h3>Liked Verses</h3>
+                {% if likes %}
+                <div class="item-list">
+                    {% for like in likes %}
+                    <div class="item">
+                        <div class="item-ref">{{ like.reference }}</div>
+                        <div class="item-text">{{ like.text[:200] }}{% if like.text|length > 200 %}...{% endif %}</div>
+                        <div class="item-time">{{ like.timestamp }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">No liked verses</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div id="saves" class="tab-content">
+            <div class="content-section">
+                <h3>Saved Verses</h3>
+                {% if saves %}
+                <div class="item-list">
+                    {% for save in saves %}
+                    <div class="item">
+                        <div class="item-ref">{{ save.reference }}</div>
+                        <div class="item-text">{{ save.text[:200] }}{% if save.text|length > 200 %}...{% endif %}</div>
+                        <div class="item-time">{{ save.timestamp }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">No saved verses</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div id="comments" class="tab-content">
+            <div class="content-section">
+                <h3>Comments</h3>
+                {% if comments %}
+                <div class="item-list">
+                    {% for comment in comments %}
+                    <div class="item">
+                        <div class="item-ref">{{ comment.reference }}</div>
+                        <div class="item-text">{{ comment.text }}</div>
+                        <div class="item-time">{{ comment.timestamp }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">No comments</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div id="audit" class="tab-content">
+            <div class="content-section">
+                <h3>Audit History</h3>
+                {% if audit_history %}
+                <div class="item-list">
+                    {% for log in audit_history %}
+                    <div class="audit-log">
+                        <div class="audit-icon">📝</div>
+                        <div class="audit-details">
+                            <div class="audit-action">{{ log.action }}</div>
+                            <div class="audit-meta">{{ log.created_at }} {% if log.details %}| {{ log.details }}{% endif %}</div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">No audit history</div>
+                {% endif %}
+            </div>
+        </div>
+    </main>
+
+    <script>
+        function showTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+        }
+        
+        async function banUser(userId) {
+            const reason = prompt('Enter ban reason:');
+            if (!reason) return;
+            
+            const duration = prompt('Enter duration in hours (leave empty for permanent):');
+            
+            try {
+                const response = await fetch(`/admin/api/user/${userId}/ban`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: 'ban', reason, duration})
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    alert('User banned successfully');
+                    location.reload();
+                } else {
+                    alert(data.error || 'Failed to ban user');
+                }
+            } catch (err) {
+                alert('Network error');
+            }
+        }
+        
+        async function unbanUser(userId) {
+            if (!confirm('Are you sure you want to unban this user?')) return;
+            
+            try {
+                const response = await fetch(`/admin/api/user/${userId}/ban`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: 'unban'})
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    alert('User unbanned successfully');
+                    location.reload();
+                } else {
+                    alert(data.error || 'Failed to unban user');
+                }
+            } catch (err) {
+                alert('Network error');
+            }
+        }
+    </script>
+</body>
+</html>

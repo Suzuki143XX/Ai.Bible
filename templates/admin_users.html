@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Management | Bible AI Admin</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0a0a0f;
+            color: #fff;
+            min-height: 100vh;
+        }
+        
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 260px;
+            height: 100vh;
+            background: rgba(255, 255, 255, 0.03);
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 30px 20px;
+            overflow-y: auto;
+        }
+        
+        .sidebar-header {
+            padding-bottom: 30px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 30px;
+        }
+        
+        .sidebar-header h1 {
+            font-size: 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .sidebar-header p {
+            color: #666;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            color: #aaa;
+            text-decoration: none;
+            border-radius: 10px;
+            margin-bottom: 8px;
+            transition: all 0.3s ease;
+        }
+        
+        .nav-item:hover, .nav-item.active {
+            background: rgba(102, 126, 234, 0.1);
+            color: #fff;
+        }
+        
+        .nav-item svg {
+            width: 20px;
+            height: 20px;
+        }
+        
+        .main-content {
+            margin-left: 260px;
+            padding: 40px;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+        
+        .header h2 {
+            font-size: 32px;
+            font-weight: 700;
+        }
+        
+        .filters {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .search-box {
+            flex: 1;
+            min-width: 300px;
+            position: relative;
+        }
+        
+        .search-box input {
+            width: 100%;
+            padding: 12px 16px 12px 44px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            color: #fff;
+            font-size: 14px;
+        }
+        
+        .search-box svg {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #666;
+        }
+        
+        .filter-select {
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        
+        .users-grid {
+            display: grid;
+            gap: 16px;
+        }
+        
+        .user-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transition: all 0.3s ease;
+        }
+        
+        .user-card:hover {
+            border-color: rgba(102, 126, 234, 0.3);
+            transform: translateX(5px);
+        }
+        
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        
+        .user-avatar {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: 600;
+        }
+        
+        .user-avatar img {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+        
+        .user-details h3 {
+            font-size: 18px;
+            margin-bottom: 4px;
+        }
+        
+        .user-details p {
+            color: #888;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        
+        .user-stats {
+            display: flex;
+            gap: 16px;
+            font-size: 13px;
+            color: #666;
+        }
+        
+        .user-stats span {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .user-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        
+        .badge {
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .badge-admin {
+            background: rgba(102, 126, 234, 0.2);
+            color: #667eea;
+        }
+        
+        .badge-moderator {
+            background: rgba(255, 149, 0, 0.2);
+            color: #ff9500;
+        }
+        
+        .badge-user {
+            background: rgba(52, 199, 89, 0.2);
+            color: #34c759;
+        }
+        
+        .badge-banned {
+            background: rgba(255, 59, 48, 0.2);
+            color: #ff3b30;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+        }
+        
+        .btn-danger {
+            background: rgba(255, 59, 48, 0.2);
+            color: #ff3b30;
+            border: 1px solid rgba(255, 59, 48, 0.3);
+        }
+        
+        .btn-success {
+            background: rgba(52, 199, 89, 0.2);
+            color: #34c759;
+            border: 1px solid rgba(52, 199, 89, 0.3);
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #666;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px;
+            color: #666;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: #1a1a2e;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 30px;
+            width: 90%;
+            max-width: 500px;
+        }
+        
+        .modal-header {
+            margin-bottom: 20px;
+        }
+        
+        .modal-header h3 {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+        
+        .modal-header p {
+            color: #888;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #aaa;
+            font-size: 14px;
+        }
+        
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px 16px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            color: #fff;
+            font-size: 14px;
+        }
+        
+        .form-group textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            margin-top: 24px;
+        }
+        
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            padding: 16px 24px;
+            background: rgba(52, 199, 89, 0.9);
+            color: #fff;
+            border-radius: 12px;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 2000;
+        }
+        
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+        
+        .toast.error {
+            background: rgba(255, 59, 48, 0.9);
+        }
+    </style>
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h1>⚡ Bible AI Admin</h1>
+            <p>Management Console</p>
+        </div>
+        
+        <nav>
+            <a href="/admin/dashboard" class="nav-item">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
+                Dashboard
+            </a>
+            <a href="/admin/users" class="nav-item active">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                Users
+            </a>
+            <a href="/admin/content" class="nav-item">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                Content
+            </a>
+            <a href="/admin/audit" class="nav-item">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                Audit Logs
+            </a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <div class="header">
+            <h2>User Management</h2>
+        </div>
+
+        <div class="filters">
+            <div class="search-box">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                <input type="text" id="searchInput" placeholder="Search users by name or email...">
+            </div>
+            <select class="filter-select" id="statusFilter">
+                <option value="all">All Status</option>
+                <option value="banned">Banned</option>
+                <option value="admin">Admins</option>
+            </select>
+            <select class="filter-select" id="sortFilter">
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+                <option value="name">Name A-Z</option>
+            </select>
+        </div>
+
+        <div class="users-grid" id="usersGrid">
+            <div class="loading">Loading users...</div>
+        </div>
+    </main>
+
+    <!-- Ban Modal -->
+    <div class="modal" id="banModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Ban User</h3>
+                <p>Specify the reason and duration for this ban.</p>
+            </div>
+            <div class="form-group">
+                <label>Reason</label>
+                <textarea id="banReason" placeholder="Enter ban reason..."></textarea>
+            </div>
+            <div class="form-group">
+                <label>Duration (hours, leave empty for permanent)</label>
+                <input type="number" id="banDuration" placeholder="e.g., 24">
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="closeModal('banModal')">Cancel</button>
+                <button class="btn btn-danger" onclick="confirmBan()">Ban User</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Role Modal -->
+    <div class="modal" id="roleModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Change Role</h3>
+                <p>Update user permissions.</p>
+            </div>
+            <div class="form-group">
+                <label>New Role</label>
+                <select id="newRole">
+                    <option value="user">User</option>
+                    <option value="moderator">Moderator</option>
+                    <option value="admin">Admin</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="closeModal('roleModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="confirmRole()">Update Role</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        let users = [];
+        let selectedUserId = null;
+
+        async function loadUsers() {
+            const search = document.getElementById('searchInput').value;
+            const status = document.getElementById('statusFilter').value;
+            const sort = document.getElementById('sortFilter').value;
+            
+            try {
+                const response = await fetch(`/admin/api/users?search=${search}&status=${status}&sort=${sort}`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    showToast(data.error, true);
+                    return;
+                }
+                
+                users = data.users;
+                renderUsers();
+            } catch (err) {
+                showToast('Failed to load users', true);
+            }
+        }
+
+        function renderUsers() {
+            const grid = document.getElementById('usersGrid');
+            
+            if (users.length === 0) {
+                grid.innerHTML = '<div class="empty-state">No users found</div>';
+                return;
+            }
+            
+            grid.innerHTML = users.map(user => `
+                <div class="user-card">
+                    <div class="user-info">
+                        <div class="user-avatar">
+                            ${user.picture ? `<img src="${user.picture}" alt="">` : user.name[0].toUpperCase()}
+                        </div>
+                        <div class="user-details">
+                            <h3>${user.name}</h3>
+                            <p>${user.email}</p>
+                            <div class="user-stats">
+                                <span>❤️ ${user.likes_count} likes</span>
+                                <span>🔖 ${user.saves_count} saves</span>
+                                <span>💬 ${user.comments_count} comments</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="user-actions">
+                        <span class="badge badge-${user.is_banned ? 'banned' : user.role === 'admin' ? 'admin' : user.role === 'moderator' ? 'moderator' : 'user'}">
+                            ${user.is_banned ? 'Banned' : user.role}
+                        </span>
+                        <button class="btn btn-primary" onclick="viewUser(${user.id})">View</button>
+                        ${!user.is_banned ? 
+                            `<button class="btn btn-danger" onclick="openBanModal(${user.id})">Ban</button>` :
+                            `<button class="btn btn-success" onclick="unbanUser(${user.id})">Unban</button>`
+                        }
+                        <button class="btn btn-secondary" onclick="openRoleModal(${user.id}, '${user.role}')">Role</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function viewUser(userId) {
+            window.location.href = `/admin/user/${userId}`;
+        }
+
+        function openBanModal(userId) {
+            selectedUserId = userId;
+            document.getElementById('banModal').classList.add('active');
+        }
+
+        function openRoleModal(userId, currentRole) {
+            selectedUserId = userId;
+            document.getElementById('newRole').value = currentRole;
+            document.getElementById('roleModal').classList.add('active');
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+            selectedUserId = null;
+        }
+
+        async function confirmBan() {
+            const reason = document.getElementById('banReason').value;
+            const duration = document.getElementById('banDuration').value;
+            
+            try {
+                const response = await fetch(`/admin/api/user/${selectedUserId}/ban`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: 'ban', reason, duration})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showToast('User banned successfully');
+                    closeModal('banModal');
+                    loadUsers();
+                } else {
+                    showToast(data.error || 'Failed to ban user', true);
+                }
+            } catch (err) {
+                showToast('Network error', true);
+            }
+        }
+
+        async function unbanUser(userId) {
+            try {
+                const response = await fetch(`/admin/api/user/${userId}/ban`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: 'unban'})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showToast('User unbanned successfully');
+                    loadUsers();
+                } else {
+                    showToast(data.error || 'Failed to unban user', true);
+                }
+            } catch (err) {
+                showToast('Network error', true);
+            }
+        }
+
+        async function confirmRole() {
+            const role = document.getElementById('newRole').value;
+            
+            try {
+                const response = await fetch(`/admin/api/user/${selectedUserId}/role`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({role})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showToast('Role updated successfully');
+                    closeModal('roleModal');
+                    loadUsers();
+                } else {
+                    showToast(data.error || 'Failed to update role', true);
+                }
+            } catch (err) {
+                showToast('Network error', true);
+            }
+        }
+
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast' + (isError ? ' error' : '');
+            toast.classList.add('show');
+            
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // Event listeners
+        document.getElementById('searchInput').addEventListener('input', debounce(loadUsers, 300));
+        document.getElementById('statusFilter').addEventListener('change', loadUsers);
+        document.getElementById('sortFilter').addEventListener('change', loadUsers);
+
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // Close modals on outside click
+        window.onclick = function(event) {
+            if (event.target.classList.contains('modal')) {
+                event.target.classList.remove('active');
+            }
+        }
+
+        // Load users on page load
+        loadUsers();
+    </script>
+</body>
+</html>

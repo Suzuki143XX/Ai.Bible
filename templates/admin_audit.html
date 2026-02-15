@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audit Logs | Bible AI Admin</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0a0a0f;
+            color: #fff;
+            min-height: 100vh;
+        }
+        
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 260px;
+            height: 100vh;
+            background: rgba(255, 255, 255, 0.03);
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 30px 20px;
+            overflow-y: auto;
+        }
+        
+        .sidebar-header {
+            padding-bottom: 30px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 30px;
+        }
+        
+        .sidebar-header h1 {
+            font-size: 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            color: #aaa;
+            text-decoration: none;
+            border-radius: 10px;
+            margin-bottom: 8px;
+            transition: all 0.3s ease;
+        }
+        
+        .nav-item:hover, .nav-item.active {
+            background: rgba(102, 126, 234, 0.1);
+            color: #fff;
+        }
+        
+        .main-content {
+            margin-left: 260px;
+            padding: 40px;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+        
+        .header h2 {
+            font-size: 32px;
+            font-weight: 700;
+        }
+        
+        .filters {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .filter-select, .filter-date {
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            color: #fff;
+            font-size: 14px;
+        }
+        
+        .logs-container {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+        
+        .log-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            padding: 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            transition: background 0.3s ease;
+        }
+        
+        .log-item:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+        
+        .log-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            flex-shrink: 0;
+        }
+        
+        .log-icon.login { background: rgba(52, 199, 89, 0.1); }
+        .log-icon.ban { background: rgba(255, 59, 48, 0.1); }
+        .log-icon.unban { background: rgba(52, 199, 89, 0.1); }
+        .log-icon.role { background: rgba(255, 149, 0, 0.1); }
+        .log-icon.delete { background: rgba(255, 59, 48, 0.1); }
+        .log-icon.default { background: rgba(102, 126, 234, 0.1); }
+        
+        .log-content {
+            flex: 1;
+        }
+        
+        .log-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 6px;
+        }
+        
+        .log-action {
+            font-weight: 600;
+            font-size: 15px;
+        }
+        
+        .log-time {
+            color: #666;
+            font-size: 13px;
+        }
+        
+        .log-details {
+            color: #888;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        
+        .log-admin {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+            font-size: 13px;
+            color: #667eea;
+        }
+        
+        .admin-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            font-weight: 600;
+        }
+        
+        .target-user {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            font-size: 12px;
+            color: #aaa;
+            margin-top: 8px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #666;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px;
+            color: #666;
+        }
+        
+        .export-btn {
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: #fff;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+        
+        .export-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h1>⚡ Bible AI Admin</h1>
+        </div>
+        <nav>
+            <a href="/admin/dashboard" class="nav-item">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
+                Dashboard
+            </a>
+            <a href="/admin/users" class="nav-item">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                Users
+            </a>
+            <a href="/admin/content" class="nav-item">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                Content
+            </a>
+            <a href="/admin/audit" class="nav-item active">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                Audit Logs
+            </a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <div class="header">
+            <h2>Audit Logs</h2>
+            <button class="export-btn" onclick="exportLogs()">📥 Export CSV</button>
+        </div>
+
+        <div class="filters">
+            <select class="filter-select" id="actionFilter">
+                <option value="all">All Actions</option>
+                <option value="admin_login_master">Admin Logins</option>
+                <option value="user_banned">Bans</option>
+                <option value="user_unbanned">Unbans</option>
+                <option value="role_updated">Role Changes</option>
+                <option value="comment_deleted">Deleted Comments</option>
+                <option value="message_deleted">Deleted Messages</option>
+            </select>
+            <input type="date" class="filter-date" id="dateFrom" placeholder="From date">
+            <input type="date" class="filter-date" id="dateTo" placeholder="To date">
+        </div>
+
+        <div class="logs-container" id="logsContainer">
+            <div class="loading">Loading audit logs...</div>
+        </div>
+    </main>
+
+    <script>
+        let logs = [];
+
+        function getIconClass(action) {
+            if (action.includes('login')) return 'login';
+            if (action.includes('ban') && !action.includes('unban')) return 'ban';
+            if (action.includes('unban')) return 'unban';
+            if (action.includes('role')) return 'role';
+            if (action.includes('delete')) return 'delete';
+            return 'default';
+        }
+
+        function getIcon(action) {
+            const icons = {
+                login: '🔐',
+                ban: '🚫',
+                unban: '✅',
+                role: '👑',
+                delete: '🗑️',
+                default: '📝'
+            };
+            return icons[getIconClass(action)] || icons.default;
+        }
+
+        async function loadLogs() {
+            const action = document.getElementById('actionFilter').value;
+            const from = document.getElementById('dateFrom').value;
+            const to = document.getElementById('dateTo').value;
+            
+            try {
+                const params = new URLSearchParams();
+                if (action !== 'all') params.append('action', action);
+                if (from) params.append('from', from);
+                if (to) params.append('to', to);
+                
+                const response = await fetch(`/admin/api/audit?${params}`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    document.getElementById('logsContainer').innerHTML = `<div class="empty-state">Error: ${data.error}</div>`;
+                    return;
+                }
+                
+                logs = data.logs;
+                renderLogs();
+            } catch (err) {
+                document.getElementById('logsContainer').innerHTML = '<div class="empty-state">Failed to load logs</div>';
+            }
+        }
+
+        function renderLogs() {
+            const container = document.getElementById('logsContainer');
+            
+            if (logs.length === 0) {
+                container.innerHTML = '<div class="empty-state">No audit logs found</div>';
+                return;
+            }
+            
+            container.innerHTML = logs.map(log => `
+                <div class="log-item">
+                    <div class="log-icon ${getIconClass(log.action)}">
+                        ${getIcon(log.action)}
+                    </div>
+                    <div class="log-content">
+                        <div class="log-header">
+                            <span class="log-action">${log.action}</span>
+                            <span class="log-time">${new Date(log.created_at).toLocaleString()}</span>
+                        </div>
+                        ${log.details ? `<div class="log-details">${JSON.stringify(log.details)}</div>` : ''}
+                        <div class="log-admin">
+                            <div class="admin-avatar">${log.admin_name ? log.admin_name[0] : 'S'}</div>
+                            <span>by ${log.admin_name || 'System'}</span>
+                        </div>
+                        ${log.target_name ? `<div class="target-user">👤 Target: ${log.target_name}</div>` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function exportLogs() {
+            const csv = [
+                ['Time', 'Action', 'Admin', 'Target User', 'Details'].join(','),
+                ...logs.map(log => [
+                    log.created_at,
+                    log.action,
+                    log.admin_name || 'System',
+                    log.target_name || '',
+                    JSON.stringify(log.details || '').replace(/,/g, ';')
+                ].join(','))
+            ].join('\n');
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `audit-logs-${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+        }
+
+        // Event listeners
+        document.getElementById('actionFilter').addEventListener('change', loadLogs);
+        document.getElementById('dateFrom').addEventListener('change', loadLogs);
+        document.getElementById('dateTo').addEventListener('change', loadLogs);
+
+        // Load on page load
+        loadLogs();
+    </script>
+</body>
+</html>
