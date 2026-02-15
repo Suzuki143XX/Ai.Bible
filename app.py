@@ -1491,7 +1491,58 @@ import os
 template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
 app.template_folder = template_dir
 
+@app.route('/fix-db-secret')
+def fix_db_secret():
+    """Temporary route to fix database schema - DELETE AFTER USE"""
+    try:
+        conn, db_type = get_db()
+        c = get_cursor(conn, db_type)
+        
+        if db_type == 'postgres':
+            # Check and add columns one by one
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE")
+            except:
+                pass
+            
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS ban_expires_at TIMESTAMP")
+            except:
+                pass
+            
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS ban_reason TEXT")
+            except:
+                pass
+            
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user'")
+            except:
+                pass
+            
+            # Create audit_logs table
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id SERIAL PRIMARY KEY,
+                    admin_id INTEGER,
+                    action TEXT,
+                    target_user_id INTEGER,
+                    details TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            conn.commit()
+            conn.close()
+            return "✅ Database fixed! Delete this route now. You can access /admin/dashboard"
+        else:
+            return "Not using PostgreSQL"
+            
+    except Exception as e:
+        return f"❌ Error: {str(e)}"
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
 
