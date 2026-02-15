@@ -38,6 +38,8 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
 
 IS_POSTGRES = DATABASE_URL and ('postgresql' in DATABASE_URL or 'postgres' in DATABASE_URL)
 HAS_BAN_COLUMNS = False
+# Make check_column_exists available to admin_routes
+check_column_exists_app = check_column_exists
 
 def get_db():
     if IS_POSTGRES:
@@ -69,6 +71,7 @@ def get_cursor(conn, db_type):
         return conn.cursor()
 
 def check_column_exists(table, column):
+    """Check if a column exists in the table"""
     try:
         conn, db_type = get_db()
         c = get_cursor(conn, db_type)
@@ -968,6 +971,24 @@ import os
 template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
 app.template_folder = template_dir
 
+# Line 974: Export for admin_routes
+def log_action(admin_id, action, target_user_id=None, details=None):
+    if not HAS_BAN_COLUMNS:
+        return
+    try:
+        conn, db_type = get_db()
+        c = get_cursor(conn, db_type)
+        if db_type == 'postgres':
+            c.execute("INSERT INTO audit_logs (admin_id, action, target_user_id, details) VALUES (%s, %s, %s, %s)", (admin_id, action, target_user_id, json.dumps(details) if details else None))
+        else:
+            c.execute("INSERT INTO audit_logs (admin_id, action, target_user_id, details) VALUES (?, ?, ?, ?)", (admin_id, action, target_user_id, json.dumps(details) if details else None))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Log error: {e}")
+
+# ← BLANK LINE HERE
+# Line ~990: THIS MUST BE AT ROOT LEVEL (no indentation!)
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
