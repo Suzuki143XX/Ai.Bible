@@ -38,8 +38,8 @@ if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
 
 IS_POSTGRES = DATABASE_URL and ('postgresql' in DATABASE_URL or 'postgres' in DATABASE_URL)
 HAS_BAN_COLUMNS = False
-# Make check_column_exists available to admin_routes
-check_column_exists_app = check_column_exists
+
+# ============ DATABASE FUNCTIONS (DEFINED FIRST) ============
 
 def get_db():
     if IS_POSTGRES:
@@ -87,6 +87,9 @@ def check_column_exists(table, column):
     except Exception as e:
         logger.error(f"Check column error: {e}")
         return False
+
+# NOW we can assign it after the function is defined
+check_column_exists_app = check_column_exists
 
 def init_db():
     global HAS_BAN_COLUMNS
@@ -971,7 +974,7 @@ import os
 template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
 app.template_folder = template_dir
 
-# Line 974: Export for admin_routes
+# Export for admin_routes
 def log_action(admin_id, action, target_user_id=None, details=None):
     if not HAS_BAN_COLUMNS:
         return
@@ -987,8 +990,6 @@ def log_action(admin_id, action, target_user_id=None, details=None):
     except Exception as e:
         logger.error(f"Log error: {e}")
 
-# ← BLANK LINE HERE
-# Line ~990: THIS MUST BE AT ROOT LEVEL (no indentation!)
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
